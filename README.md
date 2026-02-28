@@ -22,7 +22,7 @@ Admin panel for candidate and constituency management
 
 🛠 Tech Stack
 
-Frontend: Next.js, Tailwind CSS
+Frontend: TypeSrcipt, Tailwind CSS
 
 AI & Vision: Face-api.js, Tesseract.js
 
