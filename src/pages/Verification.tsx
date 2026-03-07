@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { CreditCard, ScanFace, CheckCircle, Camera, RotateCcw, HelpCircle, Info } from "lucide-react";
@@ -19,14 +19,42 @@ const steps = [
 
 export default function Verification() {
   const navigate = useNavigate();
+  const videoRef = useRef<HTMLVideoElement>(null);
   const [currentStep, setCurrentStep] = useState<Step>('id-scan');
   const [progress, setProgress] = useState(0);
   const [isScanning, setIsScanning] = useState(false);
+  const [stream, setStream] = useState<MediaStream | null>(null);
 
-  const currentStepIndex = steps.findIndex(s => s.id === currentStep);
-  const progressPercent = ((currentStepIndex + 1) / steps.length) * 100;
+  // --- বাস্তব ক্যামেরা ওপেন করার লজিক ---
+  const startCamera = async () => {
+    try {
+      const mediaStream = await navigator.mediaDevices.getUserMedia({ 
+        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } } 
+      });
+      setStream(mediaStream);
+      if (videoRef.current) {
+        videoRef.current.srcObject = mediaStream;
+      }
+    } catch (err) {
+      console.error("Camera access error:", err);
+    }
+  };
+
+  useEffect(() => {
+    if (currentStep !== 'complete') {
+      startCamera();
+    }
+    // ক্যামেরা বন্ধ করার জন্য ক্লিনআপ
+    return () => {
+      if (stream) {
+        stream.getTracks().forEach(track => track.stop());
+      }
+    };
+  }, [currentStep]);
 
   const handleScan = () => {
+    if (isScanning) return;
+    
     setIsScanning(true);
     setProgress(0);
 
@@ -40,13 +68,15 @@ export default function Verification() {
             setCurrentStep('face-scan');
           } else if (currentStep === 'face-scan') {
             setCurrentStep('complete');
-            setTimeout(() => navigate('/dashboard'), 2000);
+            // ভেরিফিকেশন শেষে ক্যামেরা বন্ধ করে দেয়া
+            if (stream) stream.getTracks().forEach(track => track.stop());
+            setTimeout(() => navigate('/dashboard'), 3000);
           }
           return 100;
         }
-        return prev + 5;
+        return prev + 2; // স্ক্যানিং স্পিড
       });
-    }, 150);
+    }, 50);
   };
 
   const handleRetry = () => {
@@ -54,20 +84,21 @@ export default function Verification() {
     setIsScanning(false);
   };
 
+  const currentStepIndex = steps.findIndex(s => s.id === currentStep);
+  const progressPercent = ((currentStepIndex + 1) / steps.length) * 100;
+
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar variant="app" />
 
       <main className="flex-1 py-6 sm:py-8 lg:py-12">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 lg:px-10">
-          {/* Breadcrumb */}
           <div className="text-xs sm:text-sm text-muted-foreground mb-4 sm:mb-6">
             <span className="text-primary">BD Vote</span>
             <span className="mx-2">/</span>
             <span>আইডেন্টিটি যাচাইকরণ</span>
           </div>
 
-          {/* Header */}
           <div className="flex flex-col sm:flex-row sm:items-start justify-between gap-3 sm:gap-4 mb-6 sm:mb-8">
             <div>
               <h1 className="text-xl sm:text-2xl lg:text-4xl font-bold mb-1 sm:mb-2">আইডেন্টিটি যাচাইকরণ</h1>
@@ -81,7 +112,6 @@ export default function Verification() {
             </Button>
           </div>
 
-          {/* Progress Bar */}
           <Card className="mb-6 sm:mb-8">
             <CardContent className="p-4 sm:p-6">
               <div className="flex items-center justify-between mb-3 sm:mb-4">
@@ -92,192 +122,102 @@ export default function Verification() {
                 <span className="text-xs sm:text-sm text-muted-foreground">ধাপ {currentStepIndex + 1} / {steps.length}</span>
               </div>
               <Progress value={progressPercent} className="h-1.5 sm:h-2" />
-              <p className="text-xs sm:text-sm text-muted-foreground mt-2">
-                আপনার পরিচয় নিশ্চিত করতে নিচের ধাপগুলো সম্পন্ন করুন
-              </p>
             </CardContent>
           </Card>
 
           <div className="grid lg:grid-cols-3 gap-4 sm:gap-6 lg:gap-8">
-            {/* Steps - Horizontal on mobile, Sidebar on desktop */}
+            {/* Sidebar Steps */}
             <div className="lg:col-span-1 order-2 lg:order-1">
               <Card>
-                <CardContent className="p-4 sm:p-6">
-                  {/* Mobile: Horizontal Steps */}
-                  <div className="flex lg:hidden items-center justify-between mb-4">
-                    {steps.map((step, index) => {
-                      const isActive = step.id === currentStep;
-                      const isComplete = index < currentStepIndex;
-                      const StepIcon = step.icon;
+                <CardContent className="p-4 sm:p-6 space-y-6">
+                  {steps.map((step, index) => {
+                    const isActive = step.id === currentStep;
+                    const isComplete = index < currentStepIndex;
+                    const StepIcon = step.icon;
 
-                      return (
-                        <div key={step.id} className="flex flex-col items-center flex-1">
-                          <div className={cn(
-                            "size-10 sm:size-12 rounded-full flex items-center justify-center mb-2",
-                            isComplete ? "bg-success text-success-foreground" :
-                            isActive ? "bg-primary text-primary-foreground" :
-                            "bg-muted text-muted-foreground"
-                          )}>
-                            {isComplete ? (
-                              <CheckCircle className="size-5 sm:size-6" />
-                            ) : (
-                              <StepIcon className="size-5 sm:size-6" />
-                            )}
-                          </div>
-                          <p className={cn(
-                            "text-[10px] sm:text-xs font-medium text-center",
-                            isActive ? "text-primary" : isComplete ? "text-success" : "text-muted-foreground"
-                          )}>
+                    return (
+                      <div key={step.id} className="flex items-start gap-4">
+                        <div className={cn(
+                          "size-10 rounded-full flex items-center justify-center shrink-0",
+                          isComplete ? "bg-green-500 text-white" :
+                          isActive ? "bg-primary text-primary-foreground" :
+                          "bg-muted text-muted-foreground"
+                        )}>
+                          {isComplete ? <CheckCircle className="size-5" /> : <StepIcon className="size-5" />}
+                        </div>
+                        <div>
+                          <p className={cn("font-medium", isActive ? "text-primary" : "text-muted-foreground")}>
                             {step.label}
                           </p>
-                          {/* Connector Line */}
-                          {index < steps.length - 1 && (
-                            <div className={cn(
-                              "absolute h-0.5 w-8 top-5 sm:top-6",
-                              isComplete ? "bg-success" : "bg-muted"
-                            )} style={{ left: `calc(${(index + 1) * 33.33}% - 1rem)` }} />
-                          )}
+                          <p className="text-sm text-muted-foreground">{isActive ? 'চলমান ধাপ' : step.subtitle}</p>
                         </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Desktop: Vertical Steps */}
-                  <div className="hidden lg:block space-y-6">
-                    {steps.map((step, index) => {
-                      const isActive = step.id === currentStep;
-                      const isComplete = index < currentStepIndex;
-                      const StepIcon = step.icon;
-
-                      return (
-                        <div key={step.id} className="flex items-start gap-4">
-                          <div className={cn(
-                            "size-10 rounded-full flex items-center justify-center shrink-0",
-                            isComplete ? "bg-success text-success-foreground" :
-                            isActive ? "bg-primary text-primary-foreground" :
-                            "bg-muted text-muted-foreground"
-                          )}>
-                            {isComplete ? (
-                              <CheckCircle className="size-5" />
-                            ) : (
-                              <StepIcon className="size-5" />
-                            )}
-                          </div>
-                          <div>
-                            <p className={cn(
-                              "font-medium",
-                              isActive ? "text-primary" : isComplete ? "text-success" : "text-muted-foreground"
-                            )}>
-                              {step.label}
-                            </p>
-                            <p className="text-sm text-muted-foreground">
-                              {isActive ? 'চলমান ধাপ' : step.subtitle}
-                            </p>
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {/* Instructions */}
-                  <div className="pt-4 border-t border-border mt-4 lg:mt-0">
-                    <div className="flex items-center gap-2 text-primary mb-2 sm:mb-3">
-                      <Info className="size-3 sm:size-4" />
-                      <span className="font-medium text-xs sm:text-sm">নির্দেশনা</span>
-                    </div>
-                    <ul className="space-y-1.5 sm:space-y-2 text-xs sm:text-sm text-muted-foreground">
-                      <li>• পর্যাপ্ত আলো আছে এমন জায়গায় বসুন।</li>
-                      <li>• চশমা বা মাস্ক খুলে ফেলুন।</li>
-                      <li>• আইডি কার্ডের লেখা যেন পরিষ্কার বোঝা যায়।</li>
-                    </ul>
-                  </div>
+                      </div>
+                    );
+                  })}
                 </CardContent>
               </Card>
             </div>
 
-            {/* Main Content */}
+            {/* Main Camera View */}
             <div className="lg:col-span-2 order-1 lg:order-2">
               <Card>
                 <CardContent className="p-4 sm:p-6">
                   {currentStep === 'complete' ? (
-                    <motion.div
-                      initial={{ opacity: 0, scale: 0.95 }}
-                      animate={{ opacity: 1, scale: 1 }}
-                      className="text-center py-8 sm:py-12"
-                    >
-                      <div className="size-16 sm:size-20 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-4 sm:mb-6">
-                        <CheckCircle className="size-8 sm:size-10 text-success" />
+                    <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="text-center py-12">
+                      <div className="size-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6">
+                        <CheckCircle className="size-10 text-green-600" />
                       </div>
-                      <h2 className="text-xl sm:text-2xl font-bold mb-2">যাচাইকরণ সফল হয়েছে!</h2>
-                      <p className="text-sm sm:text-base text-muted-foreground mb-4 sm:mb-6">
-                        আপনাকে ড্যাশবোর্ডে নিয়ে যাওয়া হচ্ছে...
-                      </p>
-                      <div className="flex justify-center">
-                        <div className="animate-spin size-6 sm:size-8 border-4 border-primary border-t-transparent rounded-full" />
-                      </div>
+                      <h2 className="text-2xl font-bold mb-2">যাচাইকরণ সফল হয়েছে!</h2>
+                      <p className="text-muted-foreground mb-6">আপনাকে ড্যাশবোর্ডে নিয়ে যাওয়া হচ্ছে...</p>
+                      <div className="animate-spin size-8 border-4 border-primary border-t-transparent rounded-full mx-auto" />
                     </motion.div>
                   ) : (
                     <>
-                      <h2 className="text-base sm:text-lg lg:text-xl font-semibold text-center mb-4 sm:mb-6 px-2">
-                        {currentStep === 'id-scan' 
-                          ? 'আপনার ইউনিভার্সিটি আইডি কার্ডটি ক্যামেরার সামনে ধরুন'
-                          : 'এবার আপনার চেহারা স্থির রেখে ক্যামেরার দিকে তাকান'
-                        }
+                      <h2 className="text-lg font-semibold text-center mb-6">
+                        {currentStep === 'id-scan' ? 'আইডি কার্ডটি ক্যামেরার সামনে ধরুন' : 'আপনার ফেস ভেরিফাই করুন'}
                       </h2>
 
-                      {/* Camera Preview */}
-                      <div className="relative aspect-[4/3] sm:aspect-video bg-muted rounded-lg sm:rounded-xl overflow-hidden mb-4 sm:mb-6">
-                        <div className="absolute top-2 sm:top-4 left-2 sm:left-4 bg-destructive text-destructive-foreground px-2 sm:px-3 py-0.5 sm:py-1 rounded-full text-xs sm:text-sm font-medium flex items-center gap-1.5 sm:gap-2">
-                          <span className="size-1.5 sm:size-2 bg-destructive-foreground rounded-full animate-pulse" />
-                          LIVE
-                        </div>
-
-                        {/* Scan Frame */}
-                        <div className="absolute inset-4 sm:inset-8 border-2 border-dashed border-primary/50 rounded-lg">
+                      {/* Camera Container */}
+                      <div className="relative aspect-video bg-black rounded-xl overflow-hidden mb-6 group">
+                        <video 
+                          ref={videoRef} 
+                          autoPlay 
+                          playsInline 
+                          muted
+                          className="w-full h-full object-cover mirror transform scale-x-[-1]"
+                        />
+                        
+                        {/* Scanning Overlay */}
+                        <div className="absolute inset-8 border-2 border-dashed border-white/50 rounded-lg pointer-events-none">
                           {isScanning && (
-                            <div className="scanning-line" style={{ top: `${progress}%` }} />
+                            <motion.div 
+                              className="absolute left-0 right-0 h-1 bg-primary shadow-[0_0_15px_rgba(var(--primary),1)]"
+                              animate={{ top: ["0%", "100%", "0%"] }}
+                              transition={{ duration: 2, repeat: Infinity, ease: "linear" }}
+                            />
                           )}
                         </div>
 
-                        <div className="absolute inset-0 flex items-center justify-center">
-                          <div className="text-center text-muted-foreground">
-                            <Camera className="size-8 sm:size-12 mx-auto mb-1 sm:mb-2 opacity-50" />
-                            <p className="text-xs sm:text-sm">ক্যামেরা প্রিভিউ</p>
-                          </div>
+                        <div className="absolute top-4 left-4 bg-red-600 text-white px-3 py-1 rounded-full text-xs font-bold flex items-center gap-2">
+                          <span className="size-2 bg-white rounded-full animate-pulse" /> LIVE
                         </div>
                       </div>
 
-                      {/* Progress */}
-                      <div className="mb-4 sm:mb-6">
-                        <div className="flex justify-between text-xs sm:text-sm mb-1.5 sm:mb-2">
-                          <span className="text-muted-foreground">
-                            {currentStep === 'id-scan' ? 'আইডি ডাটা এক্সট্রাকশন' : 'ফেস ম্যাচিং'}
-                          </span>
-                          <span className="text-primary font-medium">{progress}% সম্পন্ন</span>
+                      <div className="mb-6">
+                        <div className="flex justify-between text-sm mb-2">
+                          <span className="text-muted-foreground">প্রসেসিং স্ট্যাটাস</span>
+                          <span className="text-primary font-medium">{progress}%</span>
                         </div>
-                        <Progress value={progress} className="h-1.5 sm:h-2" />
+                        <Progress value={progress} className="h-2" />
                       </div>
 
-                      {/* Actions */}
-                      <div className="flex flex-col sm:flex-row gap-2 sm:gap-4">
-                        <Button 
-                          className="flex-1 order-1" 
-                          size="lg"
-                          onClick={handleScan}
-                          disabled={isScanning}
-                        >
-                          <Camera className="size-4 sm:size-5 mr-2" />
-                          {isScanning ? 'স্ক্যান করা হচ্ছে...' : 'স্ক্যান করুন'}
+                      <div className="flex gap-4">
+                        <Button className="flex-1" size="lg" onClick={handleScan} disabled={isScanning}>
+                          <Camera className="mr-2 h-5 w-5" />
+                          {isScanning ? 'স্ক্যান হচ্ছে...' : 'স্ক্যান শুরু করুন'}
                         </Button>
-                        <Button 
-                          variant="outline" 
-                          size="lg"
-                          className="flex-1 order-2"
-                          onClick={handleRetry}
-                          disabled={isScanning}
-                        >
-                          <RotateCcw className="size-4 sm:size-5 mr-2" />
-                          আবার চেষ্টা করুন
+                        <Button variant="outline" size="lg" onClick={handleRetry} disabled={isScanning}>
+                          <RotateCcw className="mr-2 h-5 w-5" /> আবার চেষ্টা করুন
                         </Button>
                       </div>
                     </>
@@ -288,7 +228,6 @@ export default function Verification() {
           </div>
         </div>
       </main>
-
       <Footer />
     </div>
   );
