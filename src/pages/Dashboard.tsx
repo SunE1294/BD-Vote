@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
+import { getVoterSession } from "@/lib/voter-session";
+import { checkVoted, isBlockchainConfigured } from "@/lib/blockchain";
 import { 
   CreditCard, 
   Wallet, 
@@ -27,12 +29,13 @@ const pad2 = (n: number) => toBengaliNumerals(String(n).padStart(2, '0'));
 // Voting deadline - set to 5 hours from now for demo
 const VOTING_DEADLINE = new Date(Date.now() + 5 * 60 * 60 * 1000 + 12 * 60 * 1000);
 
-const user = {
-  name: "আহমেদ শরীফ",
-  id: "৫৬৭৮-৯০১২-৩৪৫৬",
+// Fallback values shown before session data is loaded
+const DEFAULT_USER = {
+  name:   "আহমেদ শরীফ",
+  id:     "৫৬৭৮-৯০১২-৩৪৫৬",
   wallet: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  voted: false,
-  center: "ঢাকা সিটি কলেজ কেন্দ্র, ধানমন্ডি"
+  voted:  false,
+  center: "ঢাকা সিটি কলেজ কেন্দ্র, ধানমন্ডি",
 };
 
 type ColorVariant = 'green' | 'blue' | 'orange' | 'red';
@@ -113,10 +116,30 @@ function LogItem({ icon: Icon, text, time, colorClass }: LogItemProps) {
 }
 
 function DashboardContent() {
+  const [user, setUser] = useState(DEFAULT_USER);
   const [timeRemaining, setTimeRemaining] = useState(() => {
     const diff = VOTING_DEADLINE.getTime() - Date.now();
     return Math.max(0, diff);
   });
+
+  // Hydrate from session and check on-chain voted status
+  useEffect(() => {
+    const session = getVoterSession();
+    if (!session) return;
+
+    setUser(prev => ({
+      ...prev,
+      name:   session.name   || prev.name,
+      id:     session.voterId || prev.id,
+      wallet: session.walletAddress || prev.wallet,
+    }));
+
+    if (isBlockchainConfigured()) {
+      checkVoted(session.walletAddress)
+        .then(voted => setUser(prev => ({ ...prev, voted })))
+        .catch(console.warn);
+    }
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     // Simulate data refresh

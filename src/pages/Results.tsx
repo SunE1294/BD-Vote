@@ -1,10 +1,10 @@
 import { motion } from "framer-motion";
 import { useState, useEffect, useCallback } from "react";
-import { 
-  TrendingUp, 
-  Download, 
-  RefreshCw, 
-  Shield, 
+import {
+  TrendingUp,
+  Download,
+  RefreshCw,
+  Shield,
   Sparkles,
   ExternalLink,
   CheckCircle,
@@ -22,26 +22,39 @@ import { Footer } from "@/components/layout/Footer";
 import { cn, toBengaliNumerals } from "@/lib/utils";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
+import { getAllCandidates, getTotalVotes, isBlockchainConfigured, type CandidateResult } from "@/lib/blockchain";
 
 
-const getStats = (currentTime: string) => [
-  { label: "মোট সংগৃহীত ভোট", value: "১২,৪৫,৬৭৮", change: "+১২.৪%", icon: Vote },
-  { label: "ভোটার উপস্থিতির হার", value: "৭৮.৫%", change: "+১.২%", icon: Users },
-  { label: "নিবন্ধিত ভোটার", value: "১৫,৮৬,০০০", subtext: "যাচাইকৃত ডাটা", icon: BarChart3 },
-  { label: "সর্বশেষ আপডেট", value: currentTime, subtext: "সরাসরি সচল", icon: Clock },
+const CANDIDATE_COLORS = [
+  "bg-primary",
+  "bg-success",
+  "bg-warning",
+  "bg-muted-foreground",
+  "bg-destructive",
+  "bg-accent-foreground",
 ];
 
-const candidates = [
+function toDisplayCandidates(chain: CandidateResult[]) {
+  const total = chain.reduce((s, c) => s + c.voteCount, 0) || 1;
+  return chain.map((c, i) => ({
+    name:    c.name,
+    votes:   toBengaliNumerals(c.voteCount.toLocaleString()),
+    percent: Math.round((c.voteCount / total) * 100),
+    color:   CANDIDATE_COLORS[i % CANDIDATE_COLORS.length],
+  }));
+}
+
+const MOCK_CANDIDATES = [
   { name: "প্রার্থী ক (নীল দল)", votes: "৫,২০,০০০", percent: 42, color: "bg-primary" },
   { name: "প্রার্থী খ (সবুজ দল)", votes: "৩,৮০,০০০", percent: 31, color: "bg-success" },
   { name: "প্রার্থী গ (কমলা দল)", votes: "২,১৫,০০০", percent: 17, color: "bg-warning" },
   { name: "প্রার্থী ঘ (স্বতন্ত্র)", votes: "১,৩০,৬৭৮", percent: 10, color: "bg-muted-foreground" },
 ];
 
-const transactions = [
+const MOCK_TRANSACTIONS = [
   { id: "0x7f2e...9a1c", time: "১৪:৩১:২০", status: "verified", network: "১২৮ নোড কনফার্মড" },
   { id: "0x4c9a...11b2", time: "১৪:৩০:৫৮", status: "verified", network: "১১৫ নোড কনফার্মড" },
-  { id: "0x1b4d...f088", time: "১৪:৩০:৪৫", status: "pending", network: "২৪ নোড কনফার্মড" },
+  { id: "0x1b4d...f088", time: "১৪:৩০:৪৫", status: "pending",  network: "২৪ নোড কনফার্মড"  },
   { id: "0x9e5a...dd32", time: "১৪:৩০:১০", status: "verified", network: "১৩০ নোড কনফার্মড" },
 ];
 
@@ -50,13 +63,28 @@ export default function Results() {
     const now = new Date();
     return toBengaliNumerals(now.toLocaleTimeString('en-GB', { hour12: false }));
   });
+  const [displayCandidates, setDisplayCandidates] = useState(MOCK_CANDIDATES);
+  const [totalVotes, setTotalVotes]               = useState("১২,৪৫,৬৭৮");
+
+  const fetchChainData = useCallback(async () => {
+    if (!isBlockchainConfigured()) return;
+    try {
+      const [chainCandidates, total] = await Promise.all([getAllCandidates(), getTotalVotes()]);
+      setDisplayCandidates(toDisplayCandidates(chainCandidates));
+      setTotalVotes(toBengaliNumerals(total.toLocaleString()));
+    } catch (err) {
+      console.warn('Could not fetch blockchain data:', err);
+    }
+  }, []);
 
   const handleRefresh = useCallback(async () => {
-    // Simulate data refresh
-    await new Promise(resolve => setTimeout(resolve, 1000));
     const now = new Date();
     setCurrentTime(toBengaliNumerals(now.toLocaleTimeString('en-GB', { hour12: false })));
-  }, []);
+    await fetchChainData();
+  }, [fetchChainData]);
+
+  // Initial load
+  useEffect(() => { fetchChainData(); }, [fetchChainData]);
 
   const {
     containerRef,
@@ -74,7 +102,12 @@ export default function Results() {
     return () => clearInterval(interval);
   }, []);
 
-  const stats = getStats(currentTime);
+  const stats = [
+    { label: "মোট সংগৃহীত ভোট",   value: totalVotes,   change: "+১২.৪%",         icon: Vote     },
+    { label: "ভোটার উপস্থিতির হার", value: "৭৮.৫%",      change: "+১.২%",          icon: Users    },
+    { label: "নিবন্ধিত ভোটার",      value: "১৫,৮৬,০০০", subtext: "যাচাইকৃত ডাটা", icon: BarChart3 },
+    { label: "সর্বশেষ আপডেট",       value: currentTime,  subtext: "সরাসরি সচল",    icon: Clock    },
+  ];
 
   return (
     <div ref={containerRef} className="min-h-screen flex flex-col bg-background overflow-auto">
@@ -167,7 +200,7 @@ export default function Results() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-4 sm:p-6 pt-2 sm:pt-4 space-y-4 sm:space-y-5">
-                  {candidates.map((candidate, index) => (
+                  {displayCandidates.map((candidate, index) => (
                     <div key={index}>
                       <div className="flex justify-between mb-1.5 sm:mb-2 gap-2">
                         <span className="font-medium text-sm sm:text-base truncate">{candidate.name}</span>
@@ -222,7 +255,7 @@ export default function Results() {
               <CardContent className="p-0">
                 {/* Mobile Card View */}
                 <div className="block sm:hidden divide-y divide-border">
-                  {transactions.map((tx) => (
+                  {MOCK_TRANSACTIONS.map((tx) => (
                     <div key={tx.id} className="p-4 space-y-2">
                       <div className="flex items-center justify-between">
                         <a href="#" className="text-primary font-mono text-xs flex items-center gap-1">
@@ -265,7 +298,7 @@ export default function Results() {
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-border">
-                      {transactions.map((tx) => (
+                      {MOCK_TRANSACTIONS.map((tx) => (
                         <tr key={tx.id} className="hover:bg-muted/50">
                           <td className="px-4 sm:px-6 py-3 sm:py-4">
                             <a href="#" className="text-primary hover:underline font-mono text-xs sm:text-sm flex items-center gap-1.5 sm:gap-2">
