@@ -64,7 +64,7 @@ export function useOfflineQueue() {
     if (isOnline && queue.length > 0 && !isProcessing) {
       processQueue();
     }
-  }, [isOnline, queue.length]);
+  }, [isOnline, queue.length, isProcessing, processQueue]);
 
   const addToQueue = useCallback((type: QueuedTransaction['type'], data: unknown) => {
     const transaction: QueuedTransaction = {

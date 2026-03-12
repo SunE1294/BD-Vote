@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Menu, X } from "lucide-react";
+import { Menu } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
@@ -12,6 +12,51 @@ import bdVoteLogo from "@/assets/bd-vote-logo.png";
 
 interface NavbarProps {
   variant?: 'landing' | 'app';
+}
+
+interface NavLinkItemProps {
+  href: string;
+  label: string;
+  isActive: boolean;
+  mobile?: boolean;
+  onClose?: () => void;
+}
+
+function NavLinkItem({ href, label, isActive, mobile = false, onClose }: NavLinkItemProps) {
+  const isHash = href.includes("#");
+  const baseClass = mobile
+    ? "px-4 py-3 rounded-lg text-base font-medium transition-colors"
+    : "text-sm font-medium transition-colors hover:text-primary";
+  const activeClass = mobile ? "bg-primary/10 text-primary" : "text-primary";
+  const inactiveClass = mobile
+    ? "text-muted-foreground hover:bg-muted hover:text-foreground"
+    : "text-muted-foreground";
+  const className = cn(baseClass, isActive ? activeClass : inactiveClass);
+
+  const handleHashClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    onClose?.();
+    const id = href.split("#")[1];
+    if (window.location.pathname !== "/") {
+      window.location.href = href;
+    } else {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
+    }
+  };
+
+  if (isHash) {
+    return (
+      <a href={href} onClick={handleHashClick} className={className}>
+        {label}
+      </a>
+    );
+  }
+
+  return (
+    <Link to={href} onClick={onClose} className={className}>
+      {label}
+    </Link>
+  );
 }
 
 export function Navbar({ variant = 'landing' }: NavbarProps) {
@@ -44,46 +89,11 @@ export function Navbar({ variant = 'landing' }: NavbarProps) {
         {/* Desktop Navigation */}
         <nav className="hidden md:flex items-center gap-6 lg:gap-8">
           {links.map((link) => {
-            const isHash = link.href.includes("#");
-            const isActive = isHash
+            const isActive = link.href.includes("#")
               ? location.pathname === "/" && location.hash === link.href.replace("/", "")
               : location.pathname === link.href;
-
-            if (isHash) {
-              return (
-                <a
-                  key={link.href}
-                  href={link.href}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    const id = link.href.split("#")[1];
-                    if (location.pathname !== "/") {
-                      window.location.href = link.href;
-                    } else {
-                      document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-                    }
-                  }}
-                  className={cn(
-                    "text-sm font-medium transition-colors hover:text-primary",
-                    isActive ? "text-primary" : "text-muted-foreground"
-                  )}
-                >
-                  {link.label}
-                </a>
-              );
-            }
-
             return (
-              <Link
-                key={link.href}
-                to={link.href}
-                className={cn(
-                  "text-sm font-medium transition-colors hover:text-primary",
-                  isActive ? "text-primary" : "text-muted-foreground"
-                )}
-              >
-                {link.label}
-              </Link>
+              <NavLinkItem key={link.href} href={link.href} label={link.label} isActive={isActive} />
             );
           })}
         </nav>
@@ -110,48 +120,18 @@ export function Navbar({ variant = 'landing' }: NavbarProps) {
                 
                 <nav className="flex flex-col gap-2">
                   {links.map((link) => {
-                    const isHash = link.href.includes("#");
-                    const isActive = isHash
+                    const isActive = link.href.includes("#")
                       ? location.pathname === "/" && location.hash === link.href.replace("/", "")
                       : location.pathname === link.href;
-
-                    if (isHash) {
-                      return (
-                        <a
-                          key={link.href}
-                          href={link.href}
-                          onClick={(e) => {
-                            e.preventDefault();
-                            setIsOpen(false);
-                            const id = link.href.split("#")[1];
-                            if (location.pathname !== "/") {
-                              window.location.href = link.href;
-                            } else {
-                              document.getElementById(id)?.scrollIntoView({ behavior: "smooth" });
-                            }
-                          }}
-                          className={cn(
-                            "px-4 py-3 rounded-lg text-base font-medium transition-colors",
-                            isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                          )}
-                        >
-                          {link.label}
-                        </a>
-                      );
-                    }
-
                     return (
-                      <Link
+                      <NavLinkItem
                         key={link.href}
-                        to={link.href}
-                        onClick={() => setIsOpen(false)}
-                        className={cn(
-                          "px-4 py-3 rounded-lg text-base font-medium transition-colors",
-                          isActive ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-muted hover:text-foreground"
-                        )}
-                      >
-                        {link.label}
-                      </Link>
+                        href={link.href}
+                        label={link.label}
+                        isActive={isActive}
+                        mobile
+                        onClose={() => setIsOpen(false)}
+                      />
                     );
                   })}
                 </nav>

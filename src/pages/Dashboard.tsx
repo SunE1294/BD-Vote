@@ -16,17 +16,13 @@ import {
   UserCheck
 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, toBengaliNumerals } from "@/lib/utils";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "@/components/dashboard/DashboardSidebar";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 
-// Convert to Bengali numerals
-const toBengaliNumerals = (num: number): string => {
-  const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
-  return num.toString().padStart(2, '0').replace(/[0-9]/g, (digit) => bengaliDigits[parseInt(digit)]);
-};
+const pad2 = (n: number) => toBengaliNumerals(String(n).padStart(2, '0'));
 
 // Voting deadline - set to 5 hours from now for demo
 const VOTING_DEADLINE = new Date(Date.now() + 5 * 60 * 60 * 1000 + 12 * 60 * 1000);
@@ -150,7 +146,7 @@ function DashboardContent() {
   const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60));
   const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000);
   
-  const countdownDisplay = `${toBengaliNumerals(hours)} ঘণ্টা ${toBengaliNumerals(minutes)} মিনিট ${toBengaliNumerals(seconds)} সেকেন্ড`;
+  const countdownDisplay = `${pad2(hours)} ঘণ্টা ${pad2(minutes)} মিনিট ${pad2(seconds)} সেকেন্ড`;
   const isExpired = timeRemaining === 0;
 
   return (

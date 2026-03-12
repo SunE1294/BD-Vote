@@ -11,6 +11,30 @@ import { cn } from "@/lib/utils";
 
 type Step = 'id-scan' | 'face-scan' | 'complete';
 
+interface StepIconCircleProps {
+  icon: React.ElementType;
+  isActive: boolean;
+  isComplete: boolean;
+  sizeClass?: string;
+  iconSizeClass?: string;
+}
+
+function StepIconCircle({ icon: Icon, isActive, isComplete, sizeClass = "size-10", iconSizeClass = "size-5" }: StepIconCircleProps) {
+  return (
+    <div className={cn(
+      sizeClass,
+      "rounded-full flex items-center justify-center",
+      isComplete ? "bg-success text-success-foreground" :
+      isActive   ? "bg-primary text-primary-foreground" :
+                   "bg-muted text-muted-foreground"
+    )}>
+      {isComplete
+        ? <CheckCircle className={iconSizeClass} />
+        : <Icon className={iconSizeClass} />}
+    </div>
+  );
+}
+
 const steps = [
   { id: 'id-scan', label: 'আইডি কার্ড স্ক্যান', icon: CreditCard, subtitle: 'চলমান ধাপ' },
   { id: 'face-scan', label: 'ফেস রিকগনিশন', icon: ScanFace, subtitle: 'ধাপ ২' },
@@ -108,22 +132,16 @@ export default function Verification() {
                     {steps.map((step, index) => {
                       const isActive = step.id === currentStep;
                       const isComplete = index < currentStepIndex;
-                      const StepIcon = step.icon;
 
                       return (
                         <div key={step.id} className="flex flex-col items-center flex-1">
-                          <div className={cn(
-                            "size-10 sm:size-12 rounded-full flex items-center justify-center mb-2",
-                            isComplete ? "bg-success text-success-foreground" :
-                            isActive ? "bg-primary text-primary-foreground" :
-                            "bg-muted text-muted-foreground"
-                          )}>
-                            {isComplete ? (
-                              <CheckCircle className="size-5 sm:size-6" />
-                            ) : (
-                              <StepIcon className="size-5 sm:size-6" />
-                            )}
-                          </div>
+                          <StepIconCircle
+                            icon={step.icon}
+                            isActive={isActive}
+                            isComplete={isComplete}
+                            sizeClass="size-10 sm:size-12 mb-2"
+                            iconSizeClass="size-5 sm:size-6"
+                          />
                           <p className={cn(
                             "text-[10px] sm:text-xs font-medium text-center",
                             isActive ? "text-primary" : isComplete ? "text-success" : "text-muted-foreground"
@@ -147,22 +165,15 @@ export default function Verification() {
                     {steps.map((step, index) => {
                       const isActive = step.id === currentStep;
                       const isComplete = index < currentStepIndex;
-                      const StepIcon = step.icon;
 
                       return (
                         <div key={step.id} className="flex items-start gap-4">
-                          <div className={cn(
-                            "size-10 rounded-full flex items-center justify-center shrink-0",
-                            isComplete ? "bg-success text-success-foreground" :
-                            isActive ? "bg-primary text-primary-foreground" :
-                            "bg-muted text-muted-foreground"
-                          )}>
-                            {isComplete ? (
-                              <CheckCircle className="size-5" />
-                            ) : (
-                              <StepIcon className="size-5" />
-                            )}
-                          </div>
+                          <StepIconCircle
+                            icon={step.icon}
+                            isActive={isActive}
+                            isComplete={isComplete}
+                            sizeClass="size-10 shrink-0"
+                          />
                           <div>
                             <p className={cn(
                               "font-medium",

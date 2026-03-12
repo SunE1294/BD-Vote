@@ -19,14 +19,10 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Navbar } from "@/components/layout/Navbar";
 import { Footer } from "@/components/layout/Footer";
-import { cn } from "@/lib/utils";
+import { cn, toBengaliNumerals } from "@/lib/utils";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 
-const toBengaliNumerals = (num: string) => {
-  const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
-  return num.replace(/[0-9]/g, (digit) => bengaliDigits[parseInt(digit)]);
-};
 
 const getStats = (currentTime: string) => [
   { label: "মোট সংগৃহীত ভোট", value: "১২,৪৫,৬৭৮", change: "+১২.৪%", icon: Vote },
