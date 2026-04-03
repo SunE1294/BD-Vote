@@ -11,6 +11,30 @@ import { cn } from "@/lib/utils";
 
 type Step = 'id-scan' | 'face-scan' | 'complete';
 
+interface StepIconCircleProps {
+  icon: React.ElementType;
+  isActive: boolean;
+  isComplete: boolean;
+  sizeClass?: string;
+  iconSizeClass?: string;
+}
+
+function StepIconCircle({ icon: Icon, isActive, isComplete, sizeClass = "size-10", iconSizeClass = "size-5" }: StepIconCircleProps) {
+  return (
+    <div className={cn(
+      sizeClass,
+      "rounded-full flex items-center justify-center",
+      isComplete ? "bg-success text-success-foreground" :
+      isActive   ? "bg-primary text-primary-foreground" :
+                   "bg-muted text-muted-foreground"
+    )}>
+      {isComplete
+        ? <CheckCircle className={iconSizeClass} />
+        : <Icon className={iconSizeClass} />}
+    </div>
+  );
+}
+
 const steps = [
   { id: 'id-scan', label: 'আইডি কার্ড স্ক্যান', icon: CreditCard, subtitle: 'চলমান ধাপ' },
   { id: 'face-scan', label: 'ফেস রিকগনিশন', icon: ScanFace, subtitle: 'ধাপ ২' },
@@ -129,6 +153,28 @@ export default function Verification() {
             {/* Sidebar Steps */}
             <div className="lg:col-span-1 order-2 lg:order-1">
               <Card>
+<<<<<<< HEAD
+                <CardContent className="p-4 sm:p-6">
+                  {/* Mobile: Horizontal Steps */}
+                  <div className="flex lg:hidden items-center justify-between mb-4">
+                    {steps.map((step, index) => {
+                      const isActive = step.id === currentStep;
+                      const isComplete = index < currentStepIndex;
+
+                      return (
+                        <div key={step.id} className="flex flex-col items-center flex-1">
+                          <StepIconCircle
+                            icon={step.icon}
+                            isActive={isActive}
+                            isComplete={isComplete}
+                            sizeClass="size-10 sm:size-12 mb-2"
+                            iconSizeClass="size-5 sm:size-6"
+                          />
+                          <p className={cn(
+                            "text-[10px] sm:text-xs font-medium text-center",
+                            isActive ? "text-primary" : isComplete ? "text-success" : "text-muted-foreground"
+                          )}>
+=======
                 <CardContent className="p-4 sm:p-6 space-y-6">
                   {steps.map((step, index) => {
                     const isActive = step.id === currentStep;
@@ -147,13 +193,63 @@ export default function Verification() {
                         </div>
                         <div>
                           <p className={cn("font-medium", isActive ? "text-primary" : "text-muted-foreground")}>
+>>>>>>> main
                             {step.label}
                           </p>
                           <p className="text-sm text-muted-foreground">{isActive ? 'চলমান ধাপ' : step.subtitle}</p>
                         </div>
+<<<<<<< HEAD
+                      );
+                    })}
+                  </div>
+
+                  {/* Desktop: Vertical Steps */}
+                  <div className="hidden lg:block space-y-6">
+                    {steps.map((step, index) => {
+                      const isActive = step.id === currentStep;
+                      const isComplete = index < currentStepIndex;
+
+                      return (
+                        <div key={step.id} className="flex items-start gap-4">
+                          <StepIconCircle
+                            icon={step.icon}
+                            isActive={isActive}
+                            isComplete={isComplete}
+                            sizeClass="size-10 shrink-0"
+                          />
+                          <div>
+                            <p className={cn(
+                              "font-medium",
+                              isActive ? "text-primary" : isComplete ? "text-success" : "text-muted-foreground"
+                            )}>
+                              {step.label}
+                            </p>
+                            <p className="text-sm text-muted-foreground">
+                              {isActive ? 'চলমান ধাপ' : step.subtitle}
+                            </p>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Instructions */}
+                  <div className="pt-4 border-t border-border mt-4 lg:mt-0">
+                    <div className="flex items-center gap-2 text-primary mb-2 sm:mb-3">
+                      <Info className="size-3 sm:size-4" />
+                      <span className="font-medium text-xs sm:text-sm">নির্দেশনা</span>
+                    </div>
+                    <ul className="space-y-1.5 sm:space-y-2 text-xs sm:text-sm text-muted-foreground">
+                      <li>• পর্যাপ্ত আলো আছে এমন জায়গায় বসুন।</li>
+                      <li>• চশমা বা মাস্ক খুলে ফেলুন।</li>
+                      <li>• আইডি কার্ডের লেখা যেন পরিষ্কার বোঝা যায়।</li>
+                    </ul>
+                  </div>
+=======
                       </div>
                     );
                   })}
+>>>>>>> main
                 </CardContent>
               </Card>
             </div>
