@@ -2,155 +2,141 @@
 pragma solidity ^0.8.24;
 
 /**
- * @title BDVote
- * @notice Immutable on-chain vote store for the BD-Vote e-voting platform.
- *         Each voter wallet may cast exactly one vote during the active election window.
+ * @title BDVote - Bangladesh Digital Voting Smart Contract
+ * @notice SRS FR-10 (Vote Encryption), FR-11 (Blockchain Storage), FR-12 (One Vote Restriction)
+ * @dev Deploy on Sepolia testnet via Remix IDE + MetaMask
+ * 
+ * HOW TO DEPLOY (Remix IDE):
+ * 1. Go to https://remix.ethereum.org
+ * 2. Create new file "BDVote.sol" and paste this code
+ * 3. Compile with Solidity 0.8.24+
+ * 4. Deploy → Environment: "Injected Provider - MetaMask"
+ * 5. Select Sepolia network in MetaMask (get free ETH from https://sepoliafaucet.com)
+ * 6. Click "Deploy" and confirm in MetaMask
+ * 7. Copy the deployed contract address
  */
 contract BDVote {
-
-    // ─── Data structures ──────────────────────────────────────────────────────
-
-    struct Candidate {
-        uint256 id;
-        string  name;
-        string  party;
-        string  symbol;
-        uint256 voteCount;
-    }
-
-    struct Election {
-        string  name;
-        uint256 startTime;
-        uint256 endTime;
-        bool    isActive;
-    }
-
-    // ─── State ─────────────────────────────────────────────────────────────────
-
+    // ===== State Variables =====
     address public admin;
-    Election public election;
-    uint256 public candidateCount;
+    bool public electionActive;
+    uint256 public totalVotes;
 
-    mapping(uint256 => Candidate) public candidates;
-    mapping(address => bool)      public hasVoted;
-    mapping(address => uint256)   public voterChoice;
+    struct Vote {
+        bytes32 voterIdHash;      // keccak256 hash of voter ID (privacy)
+        bytes32 encryptedVote;    // encrypted candidate selection
+        uint256 timestamp;        // block timestamp
+        address submittedBy;      // wallet that submitted
+    }
 
-    // ─── Events ────────────────────────────────────────────────────────────────
+    // All votes stored sequentially
+    Vote[] public votes;
 
-    event CandidateAdded      (uint256 indexed id, string name, string party);
-    event ElectionConfigured  (string name, uint256 startTime, uint256 endTime);
-    event VoteCast            (address indexed voter, uint256 indexed candidateId, uint256 timestamp);
+    // Track which voter hashes have already voted (FR-12: One Vote Restriction)
+    mapping(bytes32 => bool) public hasVoted;
 
-    // ─── Modifiers ─────────────────────────────────────────────────────────────
+    // ===== Events =====
+    event VoteCast(
+        bytes32 indexed voterIdHash,
+        bytes32 encryptedVote,
+        uint256 timestamp,
+        uint256 voteIndex
+    );
+    event ElectionStarted(uint256 timestamp);
+    event ElectionEnded(uint256 timestamp);
+    event AdminTransferred(address indexed oldAdmin, address indexed newAdmin);
 
+    // ===== Modifiers =====
     modifier onlyAdmin() {
-        require(msg.sender == admin, "BDVote: caller is not admin");
+        require(msg.sender == admin, "Only admin can call this");
         _;
     }
 
-    modifier electionActive() {
-        require(election.isActive,                    "BDVote: no active election");
-        require(block.timestamp >= election.startTime, "BDVote: election not started");
-        require(block.timestamp <= election.endTime,   "BDVote: election ended");
+    modifier electionIsActive() {
+        require(electionActive, "Election is not active");
         _;
     }
 
-    // ─── Constructor ───────────────────────────────────────────────────────────
-
+    // ===== Constructor =====
     constructor() {
         admin = msg.sender;
+        electionActive = true;
+        emit ElectionStarted(block.timestamp);
     }
 
-    // ─── Admin functions ───────────────────────────────────────────────────────
+    // ===== Core Functions =====
 
     /**
-     * @notice Set up (or replace) the election window.
-     * @param _name      Human-readable election title.
-     * @param _startTime Unix timestamp when voting opens.
-     * @param _endTime   Unix timestamp when voting closes.
+     * @notice Cast a vote (FR-10, FR-11, FR-12)
+     * @param voterIdHash keccak256 hash of the voter's NID/ID (privacy preserved)
+     * @param encryptedVote encrypted vote data (candidate selection)
      */
-    function configureElection(
-        string calldata _name,
-        uint256 _startTime,
-        uint256 _endTime
-    ) external onlyAdmin {
-        require(_endTime > _startTime, "BDVote: invalid time range");
-        election = Election(_name, _startTime, _endTime, true);
-        emit ElectionConfigured(_name, _startTime, _endTime);
-    }
+    function castVote(bytes32 voterIdHash, bytes32 encryptedVote) external electionIsActive {
+        // FR-12: One Vote Restriction - each voter hash can only vote once
+        require(!hasVoted[voterIdHash], "This voter has already voted");
+        require(voterIdHash != bytes32(0), "Invalid voter ID hash");
+        require(encryptedVote != bytes32(0), "Invalid encrypted vote");
 
-    /**
-     * @notice Register a new candidate. Candidates are numbered 1..N.
-     */
-    function addCandidate(
-        string calldata _name,
-        string calldata _party,
-        string calldata _symbol
-    ) external onlyAdmin {
-        candidateCount++;
-        candidates[candidateCount] = Candidate(candidateCount, _name, _party, _symbol, 0);
-        emit CandidateAdded(candidateCount, _name, _party);
-    }
+        // Mark as voted
+        hasVoted[voterIdHash] = true;
 
-    // ─── Voter functions ───────────────────────────────────────────────────────
+        // Store vote on-chain (FR-11: Blockchain/Distributed Storage)
+        votes.push(Vote({
+            voterIdHash: voterIdHash,
+            encryptedVote: encryptedVote,
+            timestamp: block.timestamp,
+            submittedBy: msg.sender
+        }));
 
-    /**
-     * @notice Cast a vote for a candidate.  Reverts if the caller has already voted,
-     *         the election is not active, or the candidate ID is invalid.
-     * @param _candidateId 1-based candidate index.
-     */
-    function castVote(uint256 _candidateId) external electionActive {
-        require(!hasVoted[msg.sender],                              "BDVote: already voted");
-        require(_candidateId > 0 && _candidateId <= candidateCount, "BDVote: invalid candidate");
+        totalVotes++;
 
-        hasVoted[msg.sender]    = true;
-        voterChoice[msg.sender] = _candidateId;
-        candidates[_candidateId].voteCount++;
-
-        emit VoteCast(msg.sender, _candidateId, block.timestamp);
-    }
-
-    // ─── View functions ────────────────────────────────────────────────────────
-
-    /// @notice Returns every candidate with their live vote tally.
-    function getAllCandidates() external view returns (Candidate[] memory) {
-        Candidate[] memory result = new Candidate[](candidateCount);
-        for (uint256 i = 1; i <= candidateCount; i++) {
-            result[i - 1] = candidates[i];
-        }
-        return result;
-    }
-
-    /// @notice Returns true if _voter has already cast a vote.
-    function checkVoted(address _voter) external view returns (bool) {
-        return hasVoted[_voter];
-    }
-
-    /// @notice Returns the candidate ID chosen by _voter (0 if not voted).
-    function getVoterChoice(address _voter) external view returns (uint256) {
-        return voterChoice[_voter];
-    }
-
-    /// @notice Returns the sum of all votes recorded so far.
-    function getTotalVotes() external view returns (uint256 total) {
-        for (uint256 i = 1; i <= candidateCount; i++) {
-            total += candidates[i].voteCount;
-        }
+        emit VoteCast(voterIdHash, encryptedVote, block.timestamp, totalVotes - 1);
     }
 
     /**
-     * @notice Convenience status check for the frontend.
-     * @return isOngoing  True when the election window is open right now.
-     * @return hasEnded   True when the end time has passed.
-     * @return hasStarted True when the start time has passed.
+     * @notice Get total number of votes cast
      */
-    function getElectionStatus()
-        external
-        view
-        returns (bool isOngoing, bool hasEnded, bool hasStarted)
-    {
-        hasStarted = block.timestamp >= election.startTime;
-        hasEnded   = block.timestamp >  election.endTime;
-        isOngoing  = election.isActive && hasStarted && !hasEnded;
+    function getVoteCount() external view returns (uint256) {
+        return totalVotes;
+    }
+
+    /**
+     * @notice Get vote details by index
+     */
+    function getVote(uint256 index) external view returns (
+        bytes32 voterIdHash,
+        bytes32 encryptedVote,
+        uint256 timestamp,
+        address submittedBy
+    ) {
+        require(index < votes.length, "Vote index out of bounds");
+        Vote storage v = votes[index];
+        return (v.voterIdHash, v.encryptedVote, v.timestamp, v.submittedBy);
+    }
+
+    /**
+     * @notice Check if a voter hash has already voted
+     */
+    function checkHasVoted(bytes32 voterIdHash) external view returns (bool) {
+        return hasVoted[voterIdHash];
+    }
+
+    // ===== Admin Functions =====
+
+    function startElection() external onlyAdmin {
+        require(!electionActive, "Election already active");
+        electionActive = true;
+        emit ElectionStarted(block.timestamp);
+    }
+
+    function endElection() external onlyAdmin {
+        require(electionActive, "Election not active");
+        electionActive = false;
+        emit ElectionEnded(block.timestamp);
+    }
+
+    function transferAdmin(address newAdmin) external onlyAdmin {
+        require(newAdmin != address(0), "Invalid address");
+        emit AdminTransferred(admin, newAdmin);
+        admin = newAdmin;
     }
 }

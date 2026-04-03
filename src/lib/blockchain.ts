@@ -1,103 +1,176 @@
 import { ethers } from 'ethers';
-import { BDVoteABI } from './contract-abi';
 
-const CONTRACT_ADDRESS = (import.meta.env.VITE_CONTRACT_ADDRESS as string) ?? '';
-const RPC_URL          = (import.meta.env.VITE_RPC_URL          as string) ?? 'https://rpc-amoy.polygon.technology';
-const CHAIN_ID         = parseInt((import.meta.env.VITE_CHAIN_ID as string) ?? '80002', 10);
+// BDVote Smart Contract ABI (Sepolia Testnet)
+export const BD_VOTE_ABI = [
+  "function castVote(bytes32 voterIdHash, bytes32 encryptedVote) external",
+  "function checkHasVoted(bytes32 voterIdHash) external view returns (bool)",
+  "function getVoteCount() external view returns (uint256)",
+  "function getVote(uint256 index) external view returns (bytes32 voterIdHash, bytes32 encryptedVote, uint256 timestamp, address submittedBy)",
+  "function electionActive() external view returns (bool)",
+  "function totalVotes() external view returns (uint256)",
+  "event VoteCast(bytes32 indexed voterIdHash, bytes32 encryptedVote, uint256 timestamp, uint256 voteIndex)"
+];
 
-// ─── Types ──────────────────────────────────────────────────────────────────
+// Contract address on Sepolia testnet - UPDATE after Remix deployment
+export const BD_VOTE_CONTRACT_ADDRESS = import.meta.env.VITE_BD_VOTE_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000";
 
-export interface CandidateResult {
-  id:        number;
-  name:      string;
-  party:     string;
-  symbol:    string;
-  voteCount: number;
-}
-
-export interface ElectionStatus {
-  isOngoing:  boolean;
-  hasEnded:   boolean;
-  hasStarted: boolean;
-}
-
-// ─── Helpers ────────────────────────────────────────────────────────────────
-
-function getProvider(): ethers.JsonRpcProvider {
-  return new ethers.JsonRpcProvider(RPC_URL);
-}
-
-function getContract(signerOrProvider?: ethers.Signer | ethers.Provider): ethers.Contract {
-  return new ethers.Contract(CONTRACT_ADDRESS, BDVoteABI, signerOrProvider ?? getProvider());
-}
-
-/** Returns false when VITE_CONTRACT_ADDRESS is not set — callers fall back to mock data. */
-export function isBlockchainConfigured(): boolean {
-  return CONTRACT_ADDRESS.startsWith('0x') && CONTRACT_ADDRESS.length === 42;
-}
-
-// ─── Write ───────────────────────────────────────────────────────────────────
+// Sepolia RPC
+export const SEPOLIA_RPC_URL = "https://rpc.sepolia.org";
 
 /**
- * Submit a vote transaction to the contract.
- * @param candidateId  1-based candidate index (matches order in deploy script).
- * @param privateKey   Voter's deterministic private key (from generateWalletFromVoterId).
- * @returns            Transaction hash of the mined transaction.
+ * Check if real blockchain is configured
  */
-export async function castVoteOnChain(candidateId: number, privateKey: string): Promise<string> {
-  const provider = getProvider();
+export function isBlockchainConfigured(): boolean {
+  return BD_VOTE_CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000";
+}
 
-  const network = await provider.getNetwork();
-  if (Number(network.chainId) !== CHAIN_ID) {
-    throw new Error(`Wrong network. Expected chainId ${CHAIN_ID}, got ${network.chainId}.`);
+/**
+ * Generate a keccak256 hash of the voter ID for privacy
+ */
+export function hashVoterId(voterId: string): string {
+  const salt = 'bdvote-election-system-2026';
+  return ethers.keccak256(ethers.toUtf8Bytes(`${salt}:${voterId}`));
+}
+
+/**
+ * Encrypt vote data before blockchain submission (FR-10)
+ */
+export function encryptVote(voterId: string, candidateId: string): string {
+  const timestamp = Date.now().toString();
+  const payload = `${voterId}:${candidateId}:${timestamp}`;
+  return ethers.keccak256(ethers.toUtf8Bytes(payload));
+}
+
+/**
+ * Check if a voter has already voted on-chain (FR-12)
+ */
+export async function checkVotedOnChain(voterId: string): Promise<boolean> {
+  if (!isBlockchainConfigured()) return false;
+  try {
+    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
+    const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
+    const voterIdHash = hashVoterId(voterId);
+    return await contract.checkHasVoted(voterIdHash);
+  } catch {
+    console.error('Failed to check on-chain vote status');
+    return false;
   }
-
-  const signer   = new ethers.Wallet(privateKey, provider);
-  const contract = getContract(signer);
-
-  const tx      = await (contract.castVote as (id: number) => Promise<ethers.TransactionResponse>)(candidateId);
-  const receipt = await tx.wait();
-
-  if (!receipt) throw new Error('Transaction receipt is null');
-  return receipt.hash;
 }
 
-// ─── Read ────────────────────────────────────────────────────────────────────
-
-/** Fetch all candidates with their live vote counts from the contract. */
-export async function getAllCandidates(): Promise<CandidateResult[]> {
-  const contract = getContract();
-  const raw = await (contract.getAllCandidates as () => Promise<
-    Array<{ id: bigint; name: string; party: string; symbol: string; voteCount: bigint }>
-  >)();
-
-  return raw.map((c) => ({
-    id:        Number(c.id),
-    name:      c.name,
-    party:     c.party,
-    symbol:    c.symbol,
-    voteCount: Number(c.voteCount),
-  }));
+/**
+ * Get total vote count from blockchain
+ */
+export async function getOnChainVoteCount(): Promise<number> {
+  if (!isBlockchainConfigured()) return 0;
+  try {
+    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
+    const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
+    const count = await contract.getVoteCount();
+    return Number(count);
+  } catch {
+    console.error('Failed to get on-chain vote count');
+    return 0;
+  }
 }
 
-/** Check whether a wallet address has already voted. */
-export async function checkVoted(address: string): Promise<boolean> {
-  const contract = getContract();
-  return (contract.checkVoted as (addr: string) => Promise<boolean>)(address);
+/**
+ * Get vote details from blockchain by index
+ */
+export async function getOnChainVote(index: number): Promise<{
+  voterIdHash: string;
+  encryptedVote: string;
+  timestamp: number;
+  submittedBy: string;
+} | null> {
+  if (!isBlockchainConfigured()) return null;
+  try {
+    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
+    const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
+    const [voterIdHash, encryptedVote, timestamp, submittedBy] = await contract.getVote(index);
+    return {
+      voterIdHash,
+      encryptedVote,
+      timestamp: Number(timestamp),
+      submittedBy,
+    };
+  } catch {
+    return null;
+  }
 }
 
-/** Return the sum of all votes cast so far. */
-export async function getTotalVotes(): Promise<number> {
-  const contract = getContract();
-  const total = await (contract.getTotalVotes as () => Promise<bigint>)();
-  return Number(total);
+/**
+ * Check if election is active on-chain
+ */
+export async function isElectionActive(): Promise<boolean> {
+  if (!isBlockchainConfigured()) return true;
+  try {
+    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
+    const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
+    return await contract.electionActive();
+  } catch {
+    return true;
+  }
 }
 
-/** Return the current election window status. */
-export async function getElectionStatus(): Promise<ElectionStatus> {
-  const contract = getContract();
-  const [isOngoing, hasEnded, hasStarted] = await (
-    contract.getElectionStatus as () => Promise<[boolean, boolean, boolean]>
-  )();
-  return { isOngoing, hasEnded, hasStarted };
+/**
+ * Verify a transaction hash on Sepolia
+ */
+export async function verifyTransaction(txHash: string): Promise<{
+  confirmed: boolean;
+  blockNumber: number | null;
+  timestamp: number | null;
+}> {
+  try {
+    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
+    const receipt = await provider.getTransactionReceipt(txHash);
+    if (!receipt) {
+      return { confirmed: false, blockNumber: null, timestamp: null };
+    }
+    const block = await provider.getBlock(receipt.blockNumber);
+    return {
+      confirmed: receipt.status === 1,
+      blockNumber: receipt.blockNumber,
+      timestamp: block?.timestamp ?? null,
+    };
+  } catch {
+    return { confirmed: false, blockNumber: null, timestamp: null };
+  }
+}
+
+/**
+ * Format a transaction hash for display (shortened)
+ */
+export function formatTxHash(txHash: string): string {
+  if (!txHash || txHash.length < 10) return txHash;
+  return `${txHash.slice(0, 6)}...${txHash.slice(-4)}`;
+}
+
+/**
+ * Get Sepolia explorer URL for a transaction
+ */
+export function getExplorerUrl(txHash: string): string {
+  return `https://sepolia.etherscan.io/tx/${txHash}`;
+}
+
+/**
+ * Generate a deterministic wallet from voter ID
+ */
+export function generateWalletFromVoterId(voterId: string): {
+  address: string;
+  privateKey: string;
+} {
+  const salt = 'bdvote-voting-system-2026';
+  const seed = ethers.keccak256(ethers.toUtf8Bytes(`${salt}:${voterId}`));
+  const wallet = new ethers.Wallet(seed);
+  return {
+    address: wallet.address,
+    privateKey: wallet.privateKey,
+  };
+}
+
+/**
+ * Validate if a string is a valid Ethereum address
+ */
+export function isValidAddress(address: string): boolean {
+  return ethers.isAddress(address);
 }
