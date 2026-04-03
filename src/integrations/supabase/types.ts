@@ -279,20 +279,32 @@ export type Database = {
         Row: {
           candidate_id: string
           created_at: string
+          encrypted_vote: string | null
           id: string
+          status: string
+          tx_hash: string | null
           voter_id: string
+          voter_id_hash: string | null
         }
         Insert: {
           candidate_id: string
           created_at?: string
+          encrypted_vote?: string | null
           id?: string
+          status?: string
+          tx_hash?: string | null
           voter_id: string
+          voter_id_hash?: string | null
         }
         Update: {
           candidate_id?: string
           created_at?: string
+          encrypted_vote?: string | null
           id?: string
+          status?: string
+          tx_hash?: string | null
           voter_id?: string
+          voter_id_hash?: string | null
         }
         Relationships: [
           {
@@ -322,6 +334,10 @@ export type Database = {
           _user_id: string
         }
         Returns: boolean
+      }
+      increment_vote_count: {
+        Args: { p_candidate_id: string }
+        Returns: undefined
       }
     }
     Enums: {

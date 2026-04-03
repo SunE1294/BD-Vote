@@ -106,6 +106,7 @@ export async function updateCandidate(
   return data;
 }
 
+
 // Delete a candidate
 export async function deleteCandidate(id: string): Promise<void> {
   const { error } = await supabase

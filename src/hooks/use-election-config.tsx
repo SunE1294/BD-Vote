@@ -17,13 +17,13 @@ export function useElectionConfig() {
     queryKey: ['election-config'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('election_config' as any)
+        .from('election_config')
         .select('*')
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
       if (error && error.code !== 'PGRST116') throw error;
-      return data as unknown as ElectionConfig | null;
+      return data as ElectionConfig | null;
     },
   });
 }
@@ -33,14 +33,14 @@ export function useActiveElection() {
     queryKey: ['active-election'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('election_config' as any)
+        .from('election_config')
         .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: false })
         .limit(1)
         .single();
       if (error && error.code !== 'PGRST116') return null;
-      return data as unknown as ElectionConfig | null;
+      return data as ElectionConfig | null;
     },
   });
 }
@@ -58,7 +58,7 @@ export function useSaveElectionConfig() {
     }) => {
       if (config.id) {
         const { data, error } = await supabase
-          .from('election_config' as any)
+          .from('election_config')
           .update({
             election_name: config.election_name,
             start_time: config.start_time,
@@ -72,7 +72,7 @@ export function useSaveElectionConfig() {
         return data;
       } else {
         const { data, error } = await supabase
-          .from('election_config' as any)
+          .from('election_config')
           .insert({
             election_name: config.election_name,
             start_time: config.start_time,
