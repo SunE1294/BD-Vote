@@ -86,7 +86,7 @@ async function fetchRecentVoters(limit: number): Promise<RecentVoter[]> {
 export function useRecentVoters(limit: number = 5) {
   const queryClient = useQueryClient();
 
-  // Subscribe to real-time changes on voters_master
+  // Subscribe to real-time changes on voters
   useEffect(() => {
     const channel = supabase
       .channel('voters-realtime')
