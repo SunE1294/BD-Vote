@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
+import { castVoteOnChain, isBlockchainConfigured } from '@/lib/blockchain';
+import { getVoterSession } from '@/lib/voter-session';
 
 interface QueuedTransaction {
   id: string;
@@ -64,7 +66,7 @@ export function useOfflineQueue() {
     if (isOnline && queue.length > 0 && !isProcessing) {
       processQueue();
     }
-  }, [isOnline, queue.length]);
+  }, [isOnline, queue.length, isProcessing, processQueue]);
 
   const addToQueue = useCallback((type: QueuedTransaction['type'], data: unknown) => {
     const transaction: QueuedTransaction = {
@@ -93,16 +95,17 @@ export function useOfflineQueue() {
 
     const processTransaction = async (transaction: QueuedTransaction): Promise<boolean> => {
       try {
-        // Simulate API call - replace with actual blockchain transaction
-        await new Promise((resolve, reject) => {
-          setTimeout(() => {
-            if (Math.random() > 0.1) { // 90% success rate for demo
-              resolve(true);
-            } else {
-              reject(new Error('Transaction failed'));
-            }
-          }, 1000);
-        });
+        if (transaction.type === 'vote' && isBlockchainConfigured()) {
+          const session = getVoterSession();
+          if (!session) throw new Error('No voter session');
+
+          const voteData = transaction.data as { candidateId: string };
+          const txHash = await castVoteOnChain(parseInt(voteData.candidateId), session.privateKey);
+          console.info('Vote transaction mined:', txHash);
+        } else {
+          // Fallback: simulate for demo / verification transactions
+          await new Promise<void>((resolve) => setTimeout(resolve, 800));
+        }
         return true;
       } catch (error) {
         console.error('Transaction failed:', error);

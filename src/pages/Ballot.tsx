@@ -12,6 +12,8 @@ import { useOfflineQueue } from "@/hooks/use-offline-queue";
 import { BallotSkeleton } from "@/components/ui/skeleton-loader";
 import { FaceVerificationModal } from "@/components/ballot/FaceVerificationModal";
 import { toast } from "sonner";
+import { castVoteOnChain, isBlockchainConfigured } from "@/lib/blockchain";
+import { getVoterSession } from "@/lib/voter-session";
 
 interface Candidate {
   id: string;
@@ -97,29 +99,43 @@ export default function Ballot() {
     setShowFaceVerification(true);
   };
 
-  const handleVerificationComplete = () => {
+  const handleVerificationComplete = async () => {
+    if (!selectedCandidate) return;
     setIsSubmitting(true);
     setShowFaceVerification(false);
-    
+
     if (!isOnline) {
-      // Queue the vote for later submission
-      addToQueue('vote', { candidateId: selectedCandidate?.id, candidateName: selectedCandidate?.name });
+      addToQueue('vote', { candidateId: selectedCandidate.id, candidateName: selectedCandidate.name });
       toast.info('অফলাইন মোড', {
         description: 'আপনার ভোট সংরক্ষিত হয়েছে। ইন্টারনেট ফিরলে স্বয়ংক্রিয়ভাবে জমা হবে।',
       });
-      setTimeout(() => {
-        setIsSubmitting(false);
-        navigate('/dashboard');
-      }, 1000);
-    } else {
-      // Normal submission - show success toast and navigate
-      toast.success('ভোট সফলভাবে জমা হয়েছে', {
-        description: 'আপনার ভোট ব্লকচেইনে নিরাপদে সংরক্ষিত হয়েছে।',
-      });
-      setTimeout(() => {
-        setIsSubmitting(false);
-        navigate('/results');
-      }, 1500);
+      setIsSubmitting(false);
+      navigate('/dashboard');
+      return;
+    }
+
+    try {
+      if (isBlockchainConfigured()) {
+        const session = getVoterSession();
+        if (!session) throw new Error('Voter session not found. Please verify your identity again.');
+
+        const txHash = await castVoteOnChain(parseInt(selectedCandidate.id), session.privateKey);
+        toast.success('ভোট সফলভাবে জমা হয়েছে', {
+          description: `TX: ${txHash.slice(0, 10)}...${txHash.slice(-6)}`,
+        });
+      } else {
+        // Demo mode — no contract configured yet
+        await new Promise((resolve) => setTimeout(resolve, 1200));
+        toast.success('ভোট সফলভাবে জমা হয়েছে', {
+          description: 'আপনার ভোট ব্লকচেইনে নিরাপদে সংরক্ষিত হয়েছে।',
+        });
+      }
+      navigate('/results');
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'অজানা ত্রুটি';
+      toast.error('ভোট জমা ব্যর্থ হয়েছে', { description: message });
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
