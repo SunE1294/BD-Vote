@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { Link } from "react-router-dom";
+import { getVoterSession } from "@/lib/voter-session";
+import { checkVoted, isBlockchainConfigured } from "@/lib/blockchain";
 import { 
   CreditCard, 
   Wallet, 
@@ -16,27 +18,24 @@ import {
   UserCheck
 } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { cn, toBengaliNumerals } from "@/lib/utils";
 import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
 import { DashboardSidebar } from "@/components/dashboard/DashboardSidebar";
 import { usePullToRefresh } from "@/hooks/use-pull-to-refresh";
 import { PullToRefreshIndicator } from "@/components/ui/pull-to-refresh";
 
-// Convert to Bengali numerals
-const toBengaliNumerals = (num: number): string => {
-  const bengaliDigits = ['০', '১', '২', '৩', '৪', '৫', '৬', '৭', '৮', '৯'];
-  return num.toString().padStart(2, '0').replace(/[0-9]/g, (digit) => bengaliDigits[parseInt(digit)]);
-};
+const pad2 = (n: number) => toBengaliNumerals(String(n).padStart(2, '0'));
 
 // Voting deadline - set to 5 hours from now for demo
 const VOTING_DEADLINE = new Date(Date.now() + 5 * 60 * 60 * 1000 + 12 * 60 * 1000);
 
-const user = {
-  name: "আহমেদ শরীফ",
-  id: "৫৬৭৮-৯০১২-৩৪৫৬",
+// Fallback values shown before session data is loaded
+const DEFAULT_USER = {
+  name:   "আহমেদ শরীফ",
+  id:     "৫৬৭৮-৯০১২-৩৪৫৬",
   wallet: "0x71C7656EC7ab88b098defB751B7401B5f6d8976F",
-  voted: false,
-  center: "ঢাকা সিটি কলেজ কেন্দ্র, ধানমন্ডি"
+  voted:  false,
+  center: "ঢাকা সিটি কলেজ কেন্দ্র, ধানমন্ডি",
 };
 
 type ColorVariant = 'green' | 'blue' | 'orange' | 'red';
@@ -117,10 +116,30 @@ function LogItem({ icon: Icon, text, time, colorClass }: LogItemProps) {
 }
 
 function DashboardContent() {
+  const [user, setUser] = useState(DEFAULT_USER);
   const [timeRemaining, setTimeRemaining] = useState(() => {
     const diff = VOTING_DEADLINE.getTime() - Date.now();
     return Math.max(0, diff);
   });
+
+  // Hydrate from session and check on-chain voted status
+  useEffect(() => {
+    const session = getVoterSession();
+    if (!session) return;
+
+    setUser(prev => ({
+      ...prev,
+      name:   session.name   || prev.name,
+      id:     session.voterId || prev.id,
+      wallet: session.walletAddress || prev.wallet,
+    }));
+
+    if (isBlockchainConfigured()) {
+      checkVoted(session.walletAddress)
+        .then(voted => setUser(prev => ({ ...prev, voted })))
+        .catch(console.warn);
+    }
+  }, []);
 
   const handleRefresh = useCallback(async () => {
     // Simulate data refresh
@@ -150,7 +169,7 @@ function DashboardContent() {
   const minutes = Math.floor((timeRemaining % (1000 * 60 * 60)) / (1000 * 60));
   const seconds = Math.floor((timeRemaining % (1000 * 60)) / 1000);
   
-  const countdownDisplay = `${toBengaliNumerals(hours)} ঘণ্টা ${toBengaliNumerals(minutes)} মিনিট ${toBengaliNumerals(seconds)} সেকেন্ড`;
+  const countdownDisplay = `${pad2(hours)} ঘণ্টা ${pad2(minutes)} মিনিট ${pad2(seconds)} সেকেন্ড`;
   const isExpired = timeRemaining === 0;
 
   return (
