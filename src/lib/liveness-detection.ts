@@ -1,282 +1,280 @@
 import * as faceapi from 'face-api.js';
 
-export type LivenessChallenge = 'blink' | 'turn_left' | 'turn_right' | 'smile' | 'nod';
+export type LivenessChallenge = 'blink' | 'turn-left' | 'turn-right' | 'nod';
 
 export interface LivenessState {
+  currentChallenge: LivenessChallenge | null;
+  challengesCompleted: LivenessChallenge[];
   isLive: boolean;
-  currentChallenge: LivenessChallenge;
-  challengesPassed: LivenessChallenge[];
-  challengesRequired: LivenessChallenge[];
-  score: number;
+  progress: number;
   message: string;
 }
 
-export interface LivenessFrame {
-  leftEyeOpenness: number;
-  rightEyeOpenness: number;
-  headYaw: number;
-  headPitch: number;
-  smileScore: number;
-  timestamp: number;
+interface FacePosition {
+  yaw: number; // left-right rotation (-1 to 1)
+  pitch: number; // up-down rotation (-1 to 1)
+  eyeAspectRatio: number;
 }
 
-const BLINK_THRESHOLD = 0.25;
-const TURN_THRESHOLD = 15;
-const SMILE_THRESHOLD = 0.7;
-const NOD_THRESHOLD = 10;
-const FRAMES_FOR_BLINK = 3;
+// Eye aspect ratio threshold for blink detection
+const EAR_THRESHOLD = 0.30;
+const BLINK_CONSECUTIVE_FRAMES = 1;
 
-// Calculate eye aspect ratio (EAR) for blink detection
-const calculateEyeOpenness = (landmarks: faceapi.FaceLandmarks68, eye: 'left' | 'right'): number => {
-  const points = landmarks.positions;
-
-  // Left eye: points 36-41, Right eye: points 42-47
-  const offset = eye === 'left' ? 36 : 42;
-
-  const p1 = points[offset];     // outer corner
-  const p2 = points[offset + 1]; // upper-outer
-  const p3 = points[offset + 2]; // upper-inner
-  const p4 = points[offset + 3]; // inner corner
-  const p5 = points[offset + 4]; // lower-inner
-  const p6 = points[offset + 5]; // lower-outer
-
-  // Vertical distances
-  const v1 = Math.sqrt(Math.pow(p2.x - p6.x, 2) + Math.pow(p2.y - p6.y, 2));
-  const v2 = Math.sqrt(Math.pow(p3.x - p5.x, 2) + Math.pow(p3.y - p5.y, 2));
-
-  // Horizontal distance
-  const h = Math.sqrt(Math.pow(p1.x - p4.x, 2) + Math.pow(p1.y - p4.y, 2));
-
-  // Eye aspect ratio
-  return h > 0 ? (v1 + v2) / (2.0 * h) : 0;
-};
-
-// Estimate head rotation from landmarks
-const estimateHeadPose = (landmarks: faceapi.FaceLandmarks68): { yaw: number; pitch: number } => {
-  const points = landmarks.positions;
-
-  // Nose tip (point 30), left face edge (point 0), right face edge (point 16)
-  const noseTip = points[30];
-  const leftEdge = points[0];
-  const rightEdge = points[16];
-
-  // Yaw: how much face is turned left/right
-  const faceWidth = rightEdge.x - leftEdge.x;
-  const noseOffset = noseTip.x - (leftEdge.x + faceWidth / 2);
-  const yaw = faceWidth > 0 ? (noseOffset / (faceWidth / 2)) * 45 : 0;
-
-  // Pitch: how much face is tilted up/down
-  const noseBridge = points[27]; // top of nose bridge
-  const chin = points[8];        // chin point
-  const faceHeight = chin.y - noseBridge.y;
-  const noseVerticalOffset = noseTip.y - (noseBridge.y + faceHeight * 0.4);
-  const pitch = faceHeight > 0 ? (noseVerticalOffset / faceHeight) * 30 : 0;
-
-  return { yaw, pitch };
-};
+// Head rotation thresholds
+const YAW_THRESHOLD = 0.08; // For left/right turn detection
+const PITCH_THRESHOLD = 0.08; // For nod detection
 
 export class LivenessDetector {
-  private frameHistory: LivenessFrame[] = [];
-  private state: LivenessState;
-  private blinkCount = 0;
-  private wasEyeClosed = false;
-  private closedFrameCount = 0;
+  private blinkCounter = 0;
+  private blinkDetected = false;
+  private baselinePosition: FacePosition | null = null;
+  private consecutiveBlinkFrames = 0;
+  private challengeStartTime = 0;
+  private readonly challengeTimeout = 8000; // 8 seconds per challenge
 
-  constructor(challenges?: LivenessChallenge[]) {
-    const defaultChallenges: LivenessChallenge[] = ['blink', 'turn_left', 'smile'];
-    this.state = {
-      isLive: false,
-      currentChallenge: (challenges || defaultChallenges)[0],
-      challengesPassed: [],
-      challengesRequired: challenges || defaultChallenges,
-      score: 0,
-      message: 'Please blink your eyes',
-    };
-  }
+  // Challenges to complete for liveness
+  private readonly requiredChallenges: LivenessChallenge[] = ['blink', 'turn-left', 'turn-right', 'nod'];
+  private completedChallenges: Set<LivenessChallenge> = new Set();
+  private currentChallengeIndex = 0;
 
-  // Get current state
-  getState(): LivenessState {
-    return { ...this.state };
-  }
-
-  // Reset detector
   reset(): void {
-    this.frameHistory = [];
-    this.blinkCount = 0;
-    this.wasEyeClosed = false;
-    this.closedFrameCount = 0;
-    this.state.isLive = false;
-    this.state.challengesPassed = [];
-    this.state.currentChallenge = this.state.challengesRequired[0];
-    this.state.score = 0;
-    this.state.message = this.getChallengeMessage(this.state.currentChallenge);
+    this.blinkCounter = 0;
+    this.blinkDetected = false;
+    this.baselinePosition = null;
+    this.consecutiveBlinkFrames = 0;
+    this.completedChallenges.clear();
+    this.currentChallengeIndex = 0;
+    this.challengeStartTime = Date.now();
   }
 
-  // Process a video frame
-  async processFrame(
-    detection: faceapi.WithFaceExpressions<
-      faceapi.WithFaceDescriptor<
-        faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }, faceapi.FaceLandmarks68>
-      >
-    >
-  ): Promise<LivenessState> {
-    const landmarks = detection.landmarks;
-    const expressions = detection.expressions;
+  getCurrentChallenge(): LivenessChallenge | null {
+    if (this.currentChallengeIndex >= this.requiredChallenges.length) {
+      return null;
+    }
+    return this.requiredChallenges[this.currentChallengeIndex];
+  }
 
-    // Calculate frame metrics
-    const leftEyeOpenness = calculateEyeOpenness(landmarks, 'left');
-    const rightEyeOpenness = calculateEyeOpenness(landmarks, 'right');
-    const { yaw, pitch } = estimateHeadPose(landmarks);
-    const smileScore = expressions.happy || 0;
+  isComplete(): boolean {
+    return this.currentChallengeIndex >= this.requiredChallenges.length;
+  }
 
-    const frame: LivenessFrame = {
-      leftEyeOpenness,
-      rightEyeOpenness,
-      headYaw: yaw,
-      headPitch: pitch,
-      smileScore,
-      timestamp: Date.now(),
+  getProgress(): number {
+    return (this.currentChallengeIndex / this.requiredChallenges.length) * 100;
+  }
+
+  getCompletedChallenges(): LivenessChallenge[] {
+    return Array.from(this.completedChallenges);
+  }
+
+  isChallengeTimedOut(): boolean {
+    return Date.now() - this.challengeStartTime > this.challengeTimeout;
+  }
+
+  private calculateEyeAspectRatio(landmarks: faceapi.FaceLandmarks68): number {
+    // Get eye landmarks
+    const leftEye = landmarks.getLeftEye();
+    const rightEye = landmarks.getRightEye();
+
+    // Calculate EAR for both eyes
+    const leftEAR = this.getEAR(leftEye);
+    const rightEAR = this.getEAR(rightEye);
+
+    // Average EAR
+    return (leftEAR + rightEAR) / 2;
+  }
+
+  private getEAR(eye: faceapi.Point[]): number {
+    // Eye aspect ratio calculation
+    // EAR = (||p2-p6|| + ||p3-p5||) / (2 * ||p1-p4||)
+    // Where p1-p6 are the 6 eye landmark points
+
+    const vertical1 = this.distance(eye[1], eye[5]);
+    const vertical2 = this.distance(eye[2], eye[4]);
+    const horizontal = this.distance(eye[0], eye[3]);
+
+    if (horizontal === 0) return 0;
+    return (vertical1 + vertical2) / (2 * horizontal);
+  }
+
+  private distance(p1: faceapi.Point, p2: faceapi.Point): number {
+    return Math.sqrt(Math.pow(p2.x - p1.x, 2) + Math.pow(p2.y - p1.y, 2));
+  }
+
+  private estimateHeadPose(landmarks: faceapi.FaceLandmarks68): { yaw: number; pitch: number } {
+    // Get key facial points for head pose estimation
+    const nose = landmarks.getNose();
+    const leftEye = landmarks.getLeftEye();
+    const rightEye = landmarks.getRightEye();
+    const jaw = landmarks.getJawOutline();
+
+    // Calculate eye center
+    const leftEyeCenter = this.getCenter(leftEye);
+    const rightEyeCenter = this.getCenter(rightEye);
+    const eyeCenter = {
+      x: (leftEyeCenter.x + rightEyeCenter.x) / 2,
+      y: (leftEyeCenter.y + rightEyeCenter.y) / 2,
     };
 
-    this.frameHistory.push(frame);
+    // Nose tip
+    const noseTip = nose[6]; // Bottom of nose
 
-    // Keep only last 60 frames (~2 seconds at 30fps)
-    if (this.frameHistory.length > 60) {
-      this.frameHistory.shift();
-    }
+    // Face width using jaw
+    const faceWidth = this.distance(jaw[0], jaw[16]);
 
-    // Check current challenge
-    const passed = this.checkChallenge(this.state.currentChallenge, frame);
+    // Yaw estimation: nose offset from face center
+    const faceCenter = (jaw[0].x + jaw[16].x) / 2;
+    const noseOffset = (noseTip.x - faceCenter) / (faceWidth / 2);
+    const yaw = Math.max(-1, Math.min(1, noseOffset));
 
-    if (passed) {
-      this.state.challengesPassed.push(this.state.currentChallenge);
-      this.state.score = Math.round(
-        (this.state.challengesPassed.length / this.state.challengesRequired.length) * 100
-      );
+    // Pitch estimation: vertical position of nose relative to eyes
+    const eyeToNose = noseTip.y - eyeCenter.y;
+    const expectedEyeToNose = faceWidth * 0.35; // Approximate ratio
+    const pitchOffset = (eyeToNose - expectedEyeToNose) / expectedEyeToNose;
+    const pitch = Math.max(-1, Math.min(1, pitchOffset * 0.5));
 
-      // Move to next challenge or complete
-      const nextIndex = this.state.challengesPassed.length;
-      if (nextIndex < this.state.challengesRequired.length) {
-        this.state.currentChallenge = this.state.challengesRequired[nextIndex];
-        this.state.message = this.getChallengeMessage(this.state.currentChallenge);
-      } else {
-        this.state.isLive = true;
-        this.state.message = 'Liveness verified successfully!';
-      }
-    }
-
-    return this.getState();
+    return { yaw, pitch };
   }
 
-  // Check if current challenge is completed
-  private checkChallenge(challenge: LivenessChallenge, frame: LivenessFrame): boolean {
+  private getCenter(points: faceapi.Point[]): { x: number; y: number } {
+    const sum = points.reduce(
+      (acc, p) => ({ x: acc.x + p.x, y: acc.y + p.y }),
+      { x: 0, y: 0 }
+    );
+    return { x: sum.x / points.length, y: sum.y / points.length };
+  }
+
+  async processFrame(
+    detection: faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }, faceapi.FaceLandmarks68>
+  ): Promise<LivenessState> {
+    const challenge = this.getCurrentChallenge();
+
+    if (!challenge) {
+      return {
+        currentChallenge: null,
+        challengesCompleted: this.getCompletedChallenges(),
+        isLive: true,
+        progress: 100,
+        message: 'লাইভনেস যাচাই সম্পন্ন!',
+      };
+    }
+
+    // Check timeout
+    if (this.isChallengeTimedOut()) {
+      return {
+        currentChallenge: challenge,
+        challengesCompleted: this.getCompletedChallenges(),
+        isLive: false,
+        progress: this.getProgress(),
+        message: 'সময় শেষ! আবার চেষ্টা করুন।',
+      };
+    }
+
+    const landmarks = detection.landmarks;
+    const ear = this.calculateEyeAspectRatio(landmarks);
+    const headPose = this.estimateHeadPose(landmarks);
+
+    // Set baseline if not set
+    if (!this.baselinePosition) {
+      this.baselinePosition = {
+        yaw: headPose.yaw,
+        pitch: headPose.pitch,
+        eyeAspectRatio: ear,
+      };
+    }
+
+    let challengeComplete = false;
+    let message = '';
+
     switch (challenge) {
       case 'blink':
-        return this.checkBlink(frame);
-      case 'turn_left':
-        return frame.headYaw < -TURN_THRESHOLD;
-      case 'turn_right':
-        return frame.headYaw > TURN_THRESHOLD;
-      case 'smile':
-        return frame.smileScore > SMILE_THRESHOLD;
+        // Detect blink by checking if EAR drops below threshold
+        if (ear < EAR_THRESHOLD) {
+          this.consecutiveBlinkFrames++;
+        } else {
+          if (this.consecutiveBlinkFrames >= BLINK_CONSECUTIVE_FRAMES) {
+            this.blinkCounter++;
+            challengeComplete = true;
+          }
+          this.consecutiveBlinkFrames = 0;
+        }
+        message = this.blinkCounter > 0
+          ? `চোখ পিটপিট করুন (${this.blinkCounter}/1 সম্পন্ন)`
+          : 'চোখ পিটপিট করুন';
+        break;
+
+      case 'turn-left':
+        // Detect left head turn
+        const yawLeft = headPose.yaw - (this.baselinePosition?.yaw || 0);
+        if (yawLeft > YAW_THRESHOLD) {
+          challengeComplete = true;
+        }
+        message = 'বাম দিকে মাথা ঘোরান';
+        break;
+
+      case 'turn-right':
+        // Detect right head turn
+        const yawRight = headPose.yaw - (this.baselinePosition?.yaw || 0);
+        if (yawRight < -YAW_THRESHOLD) {
+          challengeComplete = true;
+        }
+        message = 'ডান দিকে মাথা ঘোরান';
+        break;
+
       case 'nod':
-        return this.checkNod();
-      default:
-        return false;
-    }
-  }
-
-  // Blink detection: eyes must close then open
-  private checkBlink(frame: LivenessFrame): boolean {
-    const avgOpenness = (frame.leftEyeOpenness + frame.rightEyeOpenness) / 2;
-    const isClosed = avgOpenness < BLINK_THRESHOLD;
-
-    if (isClosed) {
-      this.closedFrameCount++;
+        // Detect head nod (up-down movement)
+        const pitchDiff = Math.abs(headPose.pitch - (this.baselinePosition?.pitch || 0));
+        if (pitchDiff > PITCH_THRESHOLD) {
+          challengeComplete = true;
+        }
+        message = 'মাথা উপরে-নিচে নাড়ান';
+        break;
     }
 
-    if (this.wasEyeClosed && !isClosed && this.closedFrameCount >= FRAMES_FOR_BLINK) {
-      this.blinkCount++;
-      this.closedFrameCount = 0;
-      this.wasEyeClosed = false;
-      return this.blinkCount >= 1;
+    if (challengeComplete) {
+      this.completedChallenges.add(challenge);
+      this.currentChallengeIndex++;
+      this.challengeStartTime = Date.now();
+      this.baselinePosition = null; // Reset baseline for next challenge
+      this.blinkCounter = 0;
+      this.consecutiveBlinkFrames = 0;
     }
 
-    this.wasEyeClosed = isClosed;
-    return false;
-  }
-
-  // Nod detection: head must go down then up
-  private checkNod(): boolean {
-    if (this.frameHistory.length < 15) return false;
-    const recent = this.frameHistory.slice(-15);
-    const pitches = recent.map((f) => f.headPitch);
-    const maxPitch = Math.max(...pitches);
-    const minPitch = Math.min(...pitches);
-    return maxPitch - minPitch > NOD_THRESHOLD;
-  }
-
-  // Get user-friendly message for each challenge
-  private getChallengeMessage(challenge: LivenessChallenge): string {
-    const messages: Record<LivenessChallenge, string> = {
-      blink: 'Please blink your eyes',
-      turn_left: 'Please turn your head to the left',
-      turn_right: 'Please turn your head to the right',
-      smile: 'Please smile',
-      nod: 'Please nod your head',
+    return {
+      currentChallenge: this.getCurrentChallenge(),
+      challengesCompleted: this.getCompletedChallenges(),
+      isLive: this.isComplete(),
+      progress: this.getProgress(),
+      message: this.isComplete() ? 'লাইভনেস যাচাই সম্পন্ন!' : message,
     };
-    return messages[challenge];
   }
 }
 
-// Quick liveness check (texture analysis for anti-spoofing)
-export const analyzeTextureForSpoofing = (canvas: HTMLCanvasElement): { isReal: boolean; score: number } => {
-  const ctx = canvas.getContext('2d');
-  if (!ctx) return { isReal: false, score: 0 };
-
-  const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-  const data = imageData.data;
-
-  // Calculate Laplacian variance (measures image sharpness/texture)
-  let sum = 0;
-  let sumSq = 0;
-  let count = 0;
-
-  for (let y = 1; y < canvas.height - 1; y++) {
-    for (let x = 1; x < canvas.width - 1; x++) {
-      const idx = (y * canvas.width + x) * 4;
-      const gray = 0.299 * data[idx] + 0.587 * data[idx + 1] + 0.114 * data[idx + 2];
-
-      // Laplacian kernel
-      const top = 0.299 * data[((y - 1) * canvas.width + x) * 4] +
-                  0.587 * data[((y - 1) * canvas.width + x) * 4 + 1] +
-                  0.114 * data[((y - 1) * canvas.width + x) * 4 + 2];
-      const bottom = 0.299 * data[((y + 1) * canvas.width + x) * 4] +
-                     0.587 * data[((y + 1) * canvas.width + x) * 4 + 1] +
-                     0.114 * data[((y + 1) * canvas.width + x) * 4 + 2];
-      const left = 0.299 * data[(y * canvas.width + (x - 1)) * 4] +
-                   0.587 * data[(y * canvas.width + (x - 1)) * 4 + 1] +
-                   0.114 * data[(y * canvas.width + (x - 1)) * 4 + 2];
-      const right = 0.299 * data[(y * canvas.width + (x + 1)) * 4] +
-                    0.587 * data[(y * canvas.width + (x + 1)) * 4 + 1] +
-                    0.114 * data[(y * canvas.width + (x + 1)) * 4 + 2];
-
-      const laplacian = -4 * gray + top + bottom + left + right;
-      sum += laplacian;
-      sumSq += laplacian * laplacian;
-      count++;
-    }
+export function getChallengeInstruction(challenge: LivenessChallenge): string {
+  switch (challenge) {
+    case 'blink':
+      return 'চোখ পিটপিট করুন';
+    case 'turn-left':
+      return 'বাম দিকে মাথা ঘোরান';
+    case 'turn-right':
+      return 'ডান দিকে মাথা ঘোরান';
+    case 'nod':
+      return 'মাথা উপরে-নিচে নাড়ান';
+    default:
+      return '';
   }
+}
 
-  const mean = sum / count;
-  const variance = sumSq / count - mean * mean;
-
-  // Real faces have higher texture variance than printed photos or screens
-  const SPOOF_THRESHOLD = 100;
-  const score = Math.min(100, Math.round(variance / 10));
-
-  return {
-    isReal: variance > SPOOF_THRESHOLD,
-    score,
-  };
-};
+export function getChallengeIcon(challenge: LivenessChallenge): string {
+  switch (challenge) {
+    case 'blink':
+      return '👁️';
+    case 'turn-left':
+      return '⬅️';
+    case 'turn-right':
+      return '➡️';
+    case 'nod':
+      return '↕️';
+    default:
+      return '✓';
+  }
+}
