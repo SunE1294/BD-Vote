@@ -1,198 +1,240 @@
 import * as faceapi from 'face-api.js';
 
+export interface FaceVerificationResult {
+  matched: boolean;
+  confidence: number;
+  distance: number;
+  threshold: number;
+  error?: string;
+}
+
+export interface FaceDetectionResult {
+  detected: boolean;
+  descriptor: Float32Array | null;
+  landmarks: faceapi.FaceLandmarks68 | null;
+  expression: string;
+  box: faceapi.Box | null;
+  error?: string;
+}
+
+const MODEL_URL = '/models';
 let modelsLoaded = false;
-let modelsLoading = false;
-let loadingPromise: Promise<void> | null = null;
 
-const MODEL_URL = 'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.12/model';
+// Load all required face-api.js models
+export const loadFaceModels = async (): Promise<boolean> => {
+  if (modelsLoaded) return true;
 
-export type ModelLoadProgress = {
-  current: number;
-  total: number;
-  modelName: string;
+  try {
+    await Promise.all([
+      faceapi.nets.ssdMobilenetv1.loadFromUri(MODEL_URL),
+      faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+      faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL),
+      faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL),
+      faceapi.nets.ageGenderNet.loadFromUri(MODEL_URL),
+    ]);
+    modelsLoaded = true;
+    console.log('[FaceVerification] All models loaded successfully');
+    return true;
+  } catch (error) {
+    console.error('[FaceVerification] Failed to load models:', error);
+    return false;
+  }
 };
 
-export async function loadFaceModels(
-  onProgress?: (progress: ModelLoadProgress) => void
-): Promise<void> {
-  if (modelsLoaded) return;
-  
-  // If already loading, wait for that promise
-  if (modelsLoading && loadingPromise) {
-    return loadingPromise;
-  }
-  
-  modelsLoading = true;
-  
-  loadingPromise = (async () => {
-    try {
-      const models = [
-        { name: 'tinyFaceDetector', loader: () => faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL) },
-        { name: 'faceLandmark68TinyNet', loader: () => faceapi.nets.faceLandmark68TinyNet.loadFromUri(MODEL_URL) },
-        { name: 'faceRecognitionNet', loader: () => faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL) },
-      ];
-
-      for (let i = 0; i < models.length; i++) {
-        onProgress?.({ current: i, total: models.length, modelName: models[i].name });
-        await models[i].loader();
-      }
-      
-      onProgress?.({ current: models.length, total: models.length, modelName: 'complete' });
-      modelsLoaded = true;
-      console.log('Face-api models loaded successfully');
-    } catch (error) {
-      console.error('Error loading face-api models:', error);
-      modelsLoading = false;
-      loadingPromise = null;
-      throw new Error('ফেস মডেল লোড করতে ব্যর্থ হয়েছে');
-    }
-  })();
-  
-  return loadingPromise;
-}
-
-// Preload models in the background (call this early in app lifecycle)
-export function preloadFaceModels(): void {
-  if (!modelsLoaded && !modelsLoading) {
-    loadFaceModels().catch(err => {
-      console.warn('Background model preload failed:', err);
-    });
-  }
-}
-
-export function areModelsLoaded(): boolean {
-  return modelsLoaded;
-}
-
-export function getModelLoadingState(): { loaded: boolean; loading: boolean } {
-  return { loaded: modelsLoaded, loading: modelsLoading };
-}
-
-export async function detectFace(
-  input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement
-): Promise<faceapi.WithFaceDescriptor<faceapi.WithFaceLandmarks<{ detection: faceapi.FaceDetection }, faceapi.FaceLandmarks68>> | null> {
-  const detection = await faceapi
-    .detectSingleFace(input, new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.5 }))
-    .withFaceLandmarks(true) // Use tiny landmarks for speed
-    .withFaceDescriptor();
-  
-  return detection || null;
-}
-
-export async function getFaceDescriptor(
-  input: HTMLVideoElement | HTMLImageElement | HTMLCanvasElement
-): Promise<Float32Array | null> {
-  const detection = await detectFace(input);
-  return detection?.descriptor || null;
-}
-
-export function compareFaces(descriptor1: Float32Array, descriptor2: Float32Array): number {
-  const distance = faceapi.euclideanDistance(descriptor1, descriptor2);
-  // Convert distance to similarity score (0-100)
-  // Typical threshold for same person is distance < 0.6
-  // Distance of 0 = 100% match, distance of 1 = 0% match
-  const similarity = Math.max(0, Math.min(100, (1 - distance) * 100));
-  return similarity;
-}
-
-export function isFaceMatch(descriptor1: Float32Array, descriptor2: Float32Array, threshold: number = 60): boolean {
-  const similarity = compareFaces(descriptor1, descriptor2);
-  return similarity >= threshold;
-}
-
-export async function extractFaceFromImage(imageUrl: string): Promise<Float32Array | null> {
-  return new Promise((resolve, reject) => {
-    const img = new Image();
-    img.crossOrigin = 'anonymous';
-    
-    img.onload = async () => {
-      try {
-        const descriptor = await getFaceDescriptor(img);
-        resolve(descriptor);
-      } catch (error) {
-        reject(error);
-      }
-    };
-    
-    img.onerror = () => {
-      reject(new Error('Failed to load image'));
-    };
-    
-    img.src = imageUrl;
-  });
-}
-
-export async function captureFrameFromVideo(video: HTMLVideoElement): Promise<HTMLCanvasElement> {
-  const canvas = document.createElement('canvas');
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
-  const ctx = canvas.getContext('2d');
-  
-  if (!ctx) {
-    throw new Error('Failed to get canvas context');
-  }
-  
-  ctx.drawImage(video, 0, 0);
-  return canvas;
-}
-
-export interface FaceVerificationResult {
-  success: boolean;
-  similarity: number;
-  message: string;
-}
-
-export async function verifyFaceAgainstImage(
-  liveVideoElement: HTMLVideoElement,
-  referenceImageUrl: string,
-  threshold: number = 55
-): Promise<FaceVerificationResult> {
+// Detect face from an image/video element and extract descriptor
+export const detectFace = async (
+  input: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement
+): Promise<FaceDetectionResult> => {
   try {
-    // Ensure models are loaded
     if (!modelsLoaded) {
       await loadFaceModels();
     }
-    
-    // Get face descriptor from reference image (ID card photo)
-    const referenceDescriptor = await extractFaceFromImage(referenceImageUrl);
-    if (!referenceDescriptor) {
+
+    const detection = await faceapi
+      .detectSingleFace(input, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.5 }))
+      .withFaceLandmarks()
+      .withFaceDescriptor()
+      .withFaceExpressions();
+
+    if (!detection) {
       return {
-        success: false,
-        similarity: 0,
-        message: 'আইডি কার্ডে চেহারা খুঁজে পাওয়া যায়নি',
+        detected: false,
+        descriptor: null,
+        landmarks: null,
+        expression: '',
+        box: null,
+        error: 'No face detected. Please ensure your face is clearly visible.',
       };
     }
-    
-    // Capture frame from live video
-    const canvas = await captureFrameFromVideo(liveVideoElement);
-    
-    // Get face descriptor from live video
-    const liveDescriptor = await getFaceDescriptor(canvas);
-    if (!liveDescriptor) {
-      return {
-        success: false,
-        similarity: 0,
-        message: 'লাইভ ভিডিওতে চেহারা খুঁজে পাওয়া যায়নি',
-      };
-    }
-    
-    // Compare faces
-    const similarity = compareFaces(referenceDescriptor, liveDescriptor);
-    const isMatch = similarity >= threshold;
-    
+
+    // Get dominant expression
+    const expressions = detection.expressions;
+    const dominantExpression = Object.entries(expressions)
+      .sort(([, a], [, b]) => (b as number) - (a as number))[0][0];
+
     return {
-      success: isMatch,
-      similarity: Math.round(similarity),
-      message: isMatch 
-        ? `চেহারা মিলেছে (${Math.round(similarity)}% সাদৃশ্য)` 
-        : `চেহারা মেলেনি (${Math.round(similarity)}% সাদৃশ্য)`,
+      detected: true,
+      descriptor: detection.descriptor,
+      landmarks: detection.landmarks,
+      expression: dominantExpression,
+      box: detection.detection.box,
     };
   } catch (error) {
-    console.error('Face verification error:', error);
     return {
-      success: false,
-      similarity: 0,
-      message: error instanceof Error ? error.message : 'যাচাই করতে সমস্যা হয়েছে',
+      detected: false,
+      descriptor: null,
+      landmarks: null,
+      expression: '',
+      box: null,
+      error: error instanceof Error ? error.message : 'Face detection failed',
     };
   }
-}
+};
+
+// Extract face descriptor from NID card photo
+export const extractNIDFaceDescriptor = async (
+  nidImageSrc: string
+): Promise<Float32Array | null> => {
+  try {
+    const img = await faceapi.fetchImage(nidImageSrc);
+    const detection = await faceapi
+      .detectSingleFace(img, new faceapi.SsdMobilenetv1Options({ minConfidence: 0.4 }))
+      .withFaceLandmarks()
+      .withFaceDescriptor();
+
+    if (!detection) {
+      console.warn('[FaceVerification] No face found in NID image');
+      return null;
+    }
+
+    return detection.descriptor;
+  } catch (error) {
+    console.error('[FaceVerification] NID face extraction failed:', error);
+    return null;
+  }
+};
+
+// Compare two face descriptors (Euclidean distance)
+export const compareFaces = (
+  descriptor1: Float32Array,
+  descriptor2: Float32Array,
+  threshold: number = 0.6
+): FaceVerificationResult => {
+  const distance = faceapi.euclideanDistance(descriptor1, descriptor2);
+  const confidence = Math.max(0, Math.min(100, Math.round((1 - distance) * 100)));
+  const matched = distance < threshold;
+
+  return {
+    matched,
+    confidence,
+    distance: Math.round(distance * 1000) / 1000,
+    threshold,
+  };
+};
+
+// Full verification flow: compare live camera face with NID photo
+export const verifyFaceWithNID = async (
+  liveInput: HTMLVideoElement | HTMLCanvasElement,
+  nidImageSrc: string,
+  threshold: number = 0.6
+): Promise<FaceVerificationResult> => {
+  try {
+    if (!modelsLoaded) {
+      await loadFaceModels();
+    }
+
+    // Detect live face
+    const liveDetection = await detectFace(liveInput);
+    if (!liveDetection.detected || !liveDetection.descriptor) {
+      return {
+        matched: false,
+        confidence: 0,
+        distance: 1,
+        threshold,
+        error: 'No live face detected. Please look directly at the camera.',
+      };
+    }
+
+    // Extract NID face
+    const nidDescriptor = await extractNIDFaceDescriptor(nidImageSrc);
+    if (!nidDescriptor) {
+      return {
+        matched: false,
+        confidence: 0,
+        distance: 1,
+        threshold,
+        error: 'No face detected in NID photo. Please upload a clearer image.',
+      };
+    }
+
+    // Compare
+    return compareFaces(liveDetection.descriptor, nidDescriptor, threshold);
+  } catch (error) {
+    return {
+      matched: false,
+      confidence: 0,
+      distance: 1,
+      threshold,
+      error: error instanceof Error ? error.message : 'Verification failed',
+    };
+  }
+};
+
+// Draw face detection overlay on canvas
+export const drawFaceOverlay = (
+  canvas: HTMLCanvasElement,
+  detection: FaceDetectionResult,
+  matched?: boolean
+): void => {
+  const ctx = canvas.getContext('2d');
+  if (!ctx || !detection.box) return;
+
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+  const { x, y, width, height } = detection.box;
+  const color = matched === undefined ? '#3b82f6' : matched ? '#22c55e' : '#ef4444';
+
+  // Draw bounding box
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 3;
+  ctx.strokeRect(x, y, width, height);
+
+  // Draw corner accents
+  const cornerLength = 20;
+  ctx.lineWidth = 4;
+  // Top-left
+  ctx.beginPath();
+  ctx.moveTo(x, y + cornerLength);
+  ctx.lineTo(x, y);
+  ctx.lineTo(x + cornerLength, y);
+  ctx.stroke();
+  // Top-right
+  ctx.beginPath();
+  ctx.moveTo(x + width - cornerLength, y);
+  ctx.lineTo(x + width, y);
+  ctx.lineTo(x + width, y + cornerLength);
+  ctx.stroke();
+  // Bottom-left
+  ctx.beginPath();
+  ctx.moveTo(x, y + height - cornerLength);
+  ctx.lineTo(x, y + height);
+  ctx.lineTo(x + cornerLength, y + height);
+  ctx.stroke();
+  // Bottom-right
+  ctx.beginPath();
+  ctx.moveTo(x + width - cornerLength, y + height);
+  ctx.lineTo(x + width, y + height);
+  ctx.lineTo(x + width, y + height - cornerLength);
+  ctx.stroke();
+
+  // Draw landmarks if available
+  if (detection.landmarks) {
+    const points = detection.landmarks.positions;
+    ctx.fillStyle = color;
+    points.forEach((point) => {
+      ctx.beginPath();
+      ctx.arc(point.x, point.y, 1.5, 0, 2 * Math.PI);
+      ctx.fill();
+    });
+  }
+};

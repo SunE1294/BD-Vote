@@ -1,180 +1,200 @@
 import Tesseract from 'tesseract.js';
 
-export interface ExtractedData {
-  voterId: string;
-  fullName: string;
+export interface NIDData {
+  name: string;
+  nameEn: string;
+  nameBn: string;
+  nidNumber: string;
+  dateOfBirth: string;
+  fatherName: string;
+  motherName: string;
+  address: string;
   rawText: string;
   confidence: number;
 }
 
-// Singleton scheduler for better performance
-let scheduler: Tesseract.Scheduler | null = null;
-let isInitializing = false;
-let initPromise: Promise<Tesseract.Scheduler> | null = null;
-
-async function getScheduler(): Promise<Tesseract.Scheduler> {
-  if (scheduler) return scheduler;
-  
-  if (isInitializing && initPromise) {
-    return initPromise;
-  }
-  
-  isInitializing = true;
-  initPromise = (async () => {
-    const newScheduler = Tesseract.createScheduler();
-    
-    // Create 2 workers for parallel processing
-    const workerCount = Math.min(navigator.hardwareConcurrency || 2, 2);
-    
-    for (let i = 0; i < workerCount; i++) {
-      const worker = await Tesseract.createWorker('eng+ben', 1, {
-        logger: () => {}, // Suppress verbose logging
-      });
-      newScheduler.addWorker(worker);
-    }
-    
-    scheduler = newScheduler;
-    isInitializing = false;
-    return scheduler;
-  })();
-  
-  return initPromise;
+export interface OCRResult {
+  success: boolean;
+  data: NIDData | null;
+  error?: string;
+  processingTime: number;
 }
 
-/**
- * Extract student ID and name from ID card image using OCR
- */
-export async function extractIdCardData(imageFile: File): Promise<ExtractedData> {
+// Preprocess image for better OCR accuracy
+const preprocessImage = async (imageSource: string | File): Promise<string> => {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous';
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        reject(new Error('Canvas context not available'));
+        return;
+      }
+
+      // Scale up for better OCR
+      const scale = Math.max(1, 1500 / Math.max(img.width, img.height));
+      canvas.width = img.width * scale;
+      canvas.height = img.height * scale;
+
+      // Draw and apply grayscale + contrast enhancement
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const data = imageData.data;
+
+      for (let i = 0; i < data.length; i += 4) {
+        // Convert to grayscale
+        const gray = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+        // Apply contrast enhancement
+        const contrast = 1.5;
+        const adjusted = ((gray / 255 - 0.5) * contrast + 0.5) * 255;
+        const final = Math.max(0, Math.min(255, adjusted));
+        // Apply threshold for binarization
+        const binary = final > 128 ? 255 : 0;
+        data[i] = binary;
+        data[i + 1] = binary;
+        data[i + 2] = binary;
+      }
+
+      ctx.putImageData(imageData, 0, 0);
+      resolve(canvas.toDataURL('image/png'));
+    };
+
+    img.onerror = () => reject(new Error('Failed to load image'));
+
+    if (imageSource instanceof File) {
+      const reader = new FileReader();
+      reader.onload = (e) => { img.src = e.target?.result as string; };
+      reader.readAsDataURL(imageSource);
+    } else {
+      img.src = imageSource;
+    }
+  });
+};
+
+// Parse Bangladesh NID card text
+const parseNIDText = (text: string): Partial<NIDData> => {
+  const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+  const result: Partial<NIDData> = { rawText: text };
+
+  // NID Number pattern: 10 or 13 or 17 digits
+  const nidMatch = text.match(/\b(\d{10}|\d{13}|\d{17})\b/);
+  if (nidMatch) {
+    result.nidNumber = nidMatch[1];
+  }
+
+  // Date of Birth pattern: DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+  const dobMatch = text.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+  if (dobMatch) {
+    result.dateOfBirth = `${dobMatch[1].padStart(2, '0')}/${dobMatch[2].padStart(2, '0')}/${dobMatch[3]}`;
+  }
+
+  // Name extraction - look for "Name" label in English
+  const nameEnMatch = text.match(/Name\s*[:\-]?\s*([A-Za-z\s\.]+)/i);
+  if (nameEnMatch) {
+    result.nameEn = nameEnMatch[1].trim();
+    result.name = result.nameEn;
+  }
+
+  // Bengali name - detect Bengali unicode range
+  const bnNameMatch = text.match(/([\u0980-\u09FF\s]+)/);
+  if (bnNameMatch && bnNameMatch[1].trim().length > 3) {
+    result.nameBn = bnNameMatch[1].trim();
+    if (!result.name) result.name = result.nameBn;
+  }
+
+  // Father's name
+  const fatherMatch = text.match(/Father\s*[:\-]?\s*([A-Za-z\s\.]+)/i);
+  if (fatherMatch) {
+    result.fatherName = fatherMatch[1].trim();
+  }
+
+  // Mother's name
+  const motherMatch = text.match(/Mother\s*[:\-]?\s*([A-Za-z\s\.]+)/i);
+  if (motherMatch) {
+    result.motherName = motherMatch[1].trim();
+  }
+
+  return result;
+};
+
+// Main OCR function
+export const scanNIDCard = async (
+  imageSource: string | File,
+  onProgress?: (progress: number) => void
+): Promise<OCRResult> => {
+  const startTime = Date.now();
+
   try {
-    const ocrScheduler = await getScheduler();
-    
-    const { data } = await ocrScheduler.addJob('recognize', imageFile);
-    
-    const text = data.text;
-    const confidence = data.confidence;
+    // Preprocess image
+    const processedImage = await preprocessImage(imageSource);
 
-    console.log('OCR Raw Text:', text);
-    console.log('OCR Confidence:', confidence);
-
-    // Extract voter ID - more flexible patterns
-    const voterIdPatterns = [
-      /(?:ID|আইডি|Roll|রোল|Voter ID|ভোটার আইডি|Student ID|শিক্ষার্থী আইডি|Reg|Registration)[:\s#.-]*(\d{4,12})/i,
-      /\b(\d{8,10})\b/,                   // 8-10 digit numbers
-      /\b(20\d{5,8})\b/,                  // Year-based IDs starting with 20
-      /\b(21\d{5,8})\b/,                  // Year-based IDs starting with 21
-      /\b(22\d{5,8})\b/,                  // Year-based IDs starting with 22
-      /\b(23\d{5,8})\b/,                  // Year-based IDs starting with 23
-      /\b(24\d{5,8})\b/,                  // Year-based IDs starting with 24
-      /\b(\d{2}[-/]\d{3,6})\b/,           // Format like 22-12345
-      /\b(\d{6,7})\b/,                    // 6-7 digit numbers
-      /[:\s](\d{4,})/,                    // Any number after colon/space
-    ];
-    
-    let voterId = '';
-    for (const pattern of voterIdPatterns) {
-      const match = text.match(pattern);
-      if (match) {
-        voterId = match[1].replace(/[-/]/g, '');
-        console.log('Matched voter ID:', voterId, 'with pattern:', pattern);
-        break;
-      }
-    }
-
-    // Extract name - more flexible patterns
-    let fullName = '';
-    
-    const namePatterns = [
-      /(?:Name|নাম|Student Name|শিক্ষার্থীর নাম|নামঃ)[:\s]*([A-Za-z\s.\u0980-\u09FF]{2,60})/i,
-      /^([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)+)$/m,  // FAHIM BIN FORHAD format
-      /^([A-Z][a-z]+(?:\s+[A-Z][a-z]+)+)$/m,        // Fahim Bin Forhad format  
-      /^([A-Z\s]{5,40})$/m,                          // ALL CAPS name line
-      /^([A-Za-z\s.]{3,40})$/m,                      // English name on its own line
-      /^([\u0980-\u09FF\s]{3,50})$/m,               // Bengali name on its own line
-    ];
-
-    for (const pattern of namePatterns) {
-      const match = text.match(pattern);
-      if (match && match[1]) {
-        const extractedName = match[1].trim();
-        // Filter out common false positives
-        if (!extractedName.match(/^\d+$/) && 
-            extractedName.length >= 3 &&
-            !extractedName.toLowerCase().includes('university') &&
-            !extractedName.toLowerCase().includes('college') &&
-            !extractedName.toLowerCase().includes('department') &&
-            !extractedName.toLowerCase().includes('card') &&
-            !extractedName.toLowerCase().includes('student') &&
-            !extractedName.toLowerCase().includes('identity')) {
-          fullName = extractedName;
-          console.log('Matched name:', fullName, 'with pattern:', pattern);
-          break;
+    // Run Tesseract OCR with Bengali + English
+    const result = await Tesseract.recognize(processedImage, 'eng+ben', {
+      logger: (m) => {
+        if (m.status === 'recognizing text' && onProgress) {
+          onProgress(Math.round(m.progress * 100));
         }
-      }
-    }
+      },
+    });
 
-    // If no name found, try to extract the best candidate line
-    if (!fullName) {
-      const lines = text.split('\n')
-        .map(line => line.trim())
-        .filter(line => {
-          return line.length >= 3 && 
-                 line.length <= 50 && 
-                 !/^\d+$/.test(line) &&           // Not just numbers
-                 !/\d{5,}/.test(line) &&          // No long number sequences (5+)
-                 !line.includes('@') &&            // Not email
-                 !line.match(/^[A-Z]{2,5}\d/) &&  // Not codes like CSE101
-                 !/university|college|department|card|identity/i.test(line);
-        });
-      
-      console.log('Filtered candidate lines:', lines);
-      
-      if (lines.length > 0) {
-        // Prefer lines with Bengali or proper English names
-        const nameLine = lines.find(line => 
-          /[\u0980-\u09FF]/.test(line) ||         // Has Bengali
-          /^[A-Z][a-z]+ [A-Z][a-z]+/.test(line) || // Proper name format
-          /^[A-Z]+ [A-Z]+ [A-Z]+$/.test(line)    // ALL CAPS name
-        ) || lines[0];
-        
-        fullName = nameLine;
-        console.log('Fallback name extracted:', fullName);
-      }
-    }
+    const confidence = result.data.confidence;
+    const parsedData = parseNIDText(result.data.text);
 
-    // If still no voter ID, try to find any reasonable number
-    if (!voterId) {
-      const anyNumber = text.match(/\b(\d{4,12})\b/);
-      if (anyNumber) {
-        voterId = anyNumber[1];
-        console.log('Fallback voter ID:', voterId);
-      }
+    // Validate minimum required fields
+    if (!parsedData.nidNumber && !parsedData.name) {
+      return {
+        success: false,
+        data: null,
+        error: 'Could not extract NID information. Please ensure the image is clear and well-lit.',
+        processingTime: Date.now() - startTime,
+      };
     }
-
-    console.log('Final extraction - ID:', voterId, 'Name:', fullName);
 
     return {
-      voterId,
-      fullName,
-      rawText: text,
-      confidence,
+      success: true,
+      data: {
+        name: parsedData.name || 'Unknown',
+        nameEn: parsedData.nameEn || '',
+        nameBn: parsedData.nameBn || '',
+        nidNumber: parsedData.nidNumber || '',
+        dateOfBirth: parsedData.dateOfBirth || '',
+        fatherName: parsedData.fatherName || '',
+        motherName: parsedData.motherName || '',
+        address: parsedData.address || '',
+        rawText: parsedData.rawText || '',
+        confidence,
+      },
+      processingTime: Date.now() - startTime,
     };
   } catch (error) {
-    console.error('OCR extraction error:', error);
     return {
-      voterId: '',
-      fullName: '',
-      rawText: '',
-      confidence: 0,
+      success: false,
+      data: null,
+      error: error instanceof Error ? error.message : 'OCR processing failed',
+      processingTime: Date.now() - startTime,
     };
   }
-}
+};
 
-/**
- * Cleanup OCR resources
- */
-export async function terminateOCR(): Promise<void> {
-  if (scheduler) {
-    await scheduler.terminate();
-    scheduler = null;
+// Validate NID number format
+export const isValidNID = (nid: string): boolean => {
+  const cleaned = nid.replace(/\s/g, '');
+  return /^(\d{10}|\d{13}|\d{17})$/.test(cleaned);
+};
+
+// Calculate age from DOB string
+export const calculateAge = (dob: string): number => {
+  const parts = dob.split('/');
+  if (parts.length !== 3) return 0;
+  const birthDate = new Date(parseInt(parts[2]), parseInt(parts[1]) - 1, parseInt(parts[0]));
+  const today = new Date();
+  let age = today.getFullYear() - birthDate.getFullYear();
+  const monthDiff = today.getMonth() - birthDate.getMonth();
+  if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birthDate.getDate())) {
+    age--;
   }
-}
+  return age;
+};
