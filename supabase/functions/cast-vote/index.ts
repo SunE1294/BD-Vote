@@ -69,7 +69,7 @@ Deno.serve(async (req) => {
 
     // 1. Verify voter exists and hasn't voted yet (FR-12)
     const { data: voter, error: voterError } = await supabaseAdmin
-      .from('voters')
+      .from('voters_master')
       .select('id, voter_id, full_name, has_voted, is_verified, constituency_id')
       .eq('id', voter_id)
       .single();
@@ -112,8 +112,9 @@ Deno.serve(async (req) => {
 
     // 3. FR-10: Vote Encryption
     const salt = 'bdvote-election-system-2026';
-    const voterIdHash = await sha256Hash(`${salt}:${voter.voter_id}`);
-    const encryptedVote = await sha256Hash(`${voter.voter_id}:${candidate_id}:${Date.now()}`);
+    const voterId = voter.voter_id || voter_id;
+    const voterIdHash = await sha256Hash(`${salt}:${voterId}`);
+    const encryptedVote = await sha256Hash(`${voterId}:${candidate_id}:${Date.now()}`);
 
     const voterIdHashBytes32 = toBytes32(voterIdHash);
     const encryptedVoteBytes32 = toBytes32(encryptedVote);
@@ -124,29 +125,33 @@ Deno.serve(async (req) => {
     // 4. FR-11: Blockchain Storage - Try real Sepolia, fallback to simulated
     if (contractAddress && deployerPrivateKey && contractAddress !== '0x0000000000000000000000000000000000000000') {
       try {
-        // Dynamic import ethers for Deno
-        const { ethers } = await import('npm:ethers@6');
-        
-        const provider = new ethers.JsonRpcProvider('https://rpc.sepolia.org');
-        const wallet = new ethers.Wallet(deployerPrivateKey, provider);
-        const contract = new ethers.Contract(contractAddress, BD_VOTE_ABI, wallet);
+        const timeout = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('Blockchain timeout')), 10000)
+        );
 
-        // Check if already voted on-chain
-        const alreadyVoted = await contract.checkHasVoted(voterIdHashBytes32);
-        if (alreadyVoted) {
+        const blockchainOp = async () => {
+          const { ethers } = await import('npm:ethers@6');
+          const provider = new ethers.JsonRpcProvider('https://rpc.sepolia.org');
+          const wallet = new ethers.Wallet(deployerPrivateKey, provider);
+          const contract = new ethers.Contract(contractAddress, BD_VOTE_ABI, wallet);
+          const alreadyVoted = await contract.checkHasVoted(voterIdHashBytes32);
+          if (alreadyVoted) throw new Error('ALREADY_VOTED_ONCHAIN');
+          const tx = await contract.castVote(voterIdHashBytes32, encryptedVoteBytes32);
+          const receipt = await tx.wait();
+          return receipt.hash;
+        };
+
+        const hash = await Promise.race([blockchainOp(), timeout]);
+        txHash = hash;
+        blockchainMode = 'live';
+        console.log(`✅ Vote cast on Sepolia: ${txHash}`);
+      } catch (blockchainError) {
+        if ((blockchainError as Error).message === 'ALREADY_VOTED_ONCHAIN') {
           return new Response(
             JSON.stringify({ error: 'এই ভোটার ইতিমধ্যে ব্লকচেইনে ভোট দিয়েছেন' }),
             { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
           );
         }
-
-        // Cast vote on Sepolia
-        const tx = await contract.castVote(voterIdHashBytes32, encryptedVoteBytes32);
-        const receipt = await tx.wait();
-        txHash = receipt.hash;
-        blockchainMode = 'live';
-        console.log(`✅ Vote cast on Sepolia: ${txHash}`);
-      } catch (blockchainError) {
         console.error('Blockchain error, falling back to simulated:', blockchainError);
         txHash = await sha256Hash(`tx:${voterIdHash}:${encryptedVote}:${Date.now()}`);
         blockchainMode = 'simulated';
@@ -161,8 +166,8 @@ Deno.serve(async (req) => {
     const { data: voteRecord, error: voteError } = await supabaseAdmin
       .from('votes')
       .insert({
-        voter_id: voter.id,
         candidate_id: candidate_id,
+        constituency_id: voter.constituency_id,
         tx_hash: txHash,
         voter_id_hash: voterIdHash,
         encrypted_vote: encryptedVote,
@@ -181,7 +186,7 @@ Deno.serve(async (req) => {
 
     // 6. Update voter status
     await supabaseAdmin
-      .from('voters')
+      .from('voters_master')
       .update({ has_voted: true })
       .eq('id', voter.id);
 
@@ -200,7 +205,7 @@ Deno.serve(async (req) => {
         blockchain_mode: blockchainMode,
         status: blockchainMode === 'live' ? 'confirmed' : 'simulated',
       },
-    });
+    }).catch(() => {});
 
     return new Response(
       JSON.stringify({

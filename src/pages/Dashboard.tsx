@@ -134,7 +134,7 @@ function DashboardContent() {
     queryFn: async () => {
       if (!verifiedVoterId) return null;
       const { data, error } = await supabase
-        .from('voters_master' as any)
+        .from('voters_master')
         .select('*')
         .eq('id', verifiedVoterId)
         .single();

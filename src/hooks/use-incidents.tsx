@@ -18,7 +18,7 @@ export function useIncidents() {
     queryKey: ['incidents'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('incidents' as any)
+        .from('incidents')
         .select('*')
         .order('created_at', { ascending: false });
       if (error) throw error;
@@ -40,7 +40,7 @@ export function useCreateIncident() {
       if (!user) throw new Error('Not authenticated');
 
       const { data, error } = await supabase
-        .from('incidents' as any)
+        .from('incidents')
         .insert({
           ...incident,
           reported_by: user.id,
@@ -59,7 +59,7 @@ export function useUpdateIncidentStatus() {
   return useMutation({
     mutationFn: async ({ id, status }: { id: string; status: string }) => {
       const { error } = await supabase
-        .from('incidents' as any)
+        .from('incidents')
         .update({ status })
         .eq('id', id);
       if (error) throw error;

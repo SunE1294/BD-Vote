@@ -18,13 +18,13 @@ export interface Candidate {
 
 async function fetchCandidates(): Promise<Candidate[]> {
   const { data, error } = await supabase
-    .from('candidates' as any)
+    .from('candidates')
     .select('*')
     .order('position', { ascending: true })
     .order('full_name', { ascending: true });
 
   if (error) throw error;
-  return (data || []) as any as Candidate[];
+  return (data || []) as Candidate[];
 }
 
 export function useCandidates() {
@@ -82,13 +82,13 @@ export async function createCandidate(candidate: {
   bio?: string;
 }): Promise<Candidate> {
   const { data, error } = await supabase
-    .from('candidates' as any)
+    .from('candidates')
     .insert(candidate)
     .select()
     .single();
 
   if (error) throw error;
-  return data as any as Candidate;
+  return data as Candidate;
 }
 
 // Update a candidate
@@ -97,20 +97,20 @@ export async function updateCandidate(
   updates: Partial<Omit<Candidate, 'id' | 'created_at' | 'updated_at' | 'created_by'>>
 ): Promise<Candidate> {
   const { data, error } = await supabase
-    .from('candidates' as any)
+    .from('candidates')
     .update(updates)
     .eq('id', id)
     .select()
     .single();
 
   if (error) throw error;
-  return data as any as Candidate;
+  return data as Candidate;
 }
 
 // Delete a candidate
 export async function deleteCandidate(id: string): Promise<void> {
   const { error } = await supabase
-    .from('candidates' as any)
+    .from('candidates')
     .delete()
     .eq('id', id);
 

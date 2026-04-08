@@ -15,7 +15,7 @@ export function useConstituencies() {
     queryKey: ['constituencies'],
     queryFn: async () => {
       const { data, error } = await supabase
-        .from('constituencies' as any)
+        .from('constituencies')
         .select('*')
         .order('code');
       if (error) throw error;
@@ -29,7 +29,7 @@ export function useAddConstituency() {
   return useMutation({
     mutationFn: async (c: Omit<Constituency, 'id' | 'created_at'>) => {
       const { data, error } = await supabase
-        .from('constituencies' as any)
+        .from('constituencies')
         .insert(c)
         .select()
         .single();
@@ -45,7 +45,7 @@ export function useDeleteConstituency() {
   return useMutation({
     mutationFn: async (id: string) => {
       const { error } = await supabase
-        .from('constituencies' as any)
+        .from('constituencies')
         .delete()
         .eq('id', id);
       if (error) throw error;

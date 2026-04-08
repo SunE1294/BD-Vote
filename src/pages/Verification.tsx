@@ -31,7 +31,7 @@ export default function Verification() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [ocrProgress, setOcrProgress] = useState(0);
   const [extractedData, setExtractedData] = useState<ExtractedData | null>(null);
-  const [voterData, setVoterData] = useState<any>(null);
+  const [voterData, setVoterData] = useState<import('@/integrations/supabase/types').Tables<'voters_master'> | null>(null);
   const [faceMatchProgress, setFaceMatchProgress] = useState(0);
   const [livenessMessage, setLivenessMessage] = useState('');
   const [livenessEmoji, setLivenessEmoji] = useState('');
@@ -122,7 +122,7 @@ export default function Verification() {
       setExtractedData({ ...data, voterId: cleanNid });
 
       const { data: voter, error } = await supabase
-        .from('voters_master' as any)
+        .from('voters_master')
         .select('*')
         .eq('voter_id', cleanNid)
         .maybeSingle();
@@ -135,7 +135,7 @@ export default function Verification() {
         return;
       }
 
-      if ((voter as any).has_voted) {
+      if (voter.has_voted) {
         setErrorMessage('আপনি ইতিমধ্যে ভোট দিয়েছেন। একাধিক ভোট অনুমোদিত নয়।');
         setIsProcessing(false);
         return;
@@ -145,7 +145,7 @@ export default function Verification() {
 
       toast({
         title: 'আইডি কার্ড যাচাই সফল',
-        description: `${data.fullName || (voter as any).full_name} - আইডি: ${cleanNid}`,
+        description: `${data.fullName || voter.full_name} - আইডি: ${cleanNid}`,
       });
 
       setTimeout(() => {
@@ -185,7 +185,7 @@ export default function Verification() {
       setExtractedData({ ...data, voterId: cleanNid });
 
       const { data: voter, error } = await supabase
-        .from('voters_master' as any)
+        .from('voters_master')
         .select('*')
         .eq('voter_id', cleanNid)
         .maybeSingle();
@@ -198,7 +198,7 @@ export default function Verification() {
         return;
       }
 
-      if ((voter as any).has_voted) {
+      if (voter.has_voted) {
         setErrorMessage('আপনি ইতিমধ্যে ভোট দিয়েছেন।');
         setIsProcessing(false);
         return;
@@ -208,7 +208,7 @@ export default function Verification() {
 
       toast({
         title: 'আইডি কার্ড যাচাই সফল',
-        description: `${data.fullName || (voter as any).full_name} - আইডি: ${cleanNid}`,
+        description: `${data.fullName || voter.full_name} - আইডি: ${cleanNid}`,
       });
 
       setTimeout(() => {
@@ -293,7 +293,7 @@ export default function Verification() {
 
           if (result.success) {
             await supabase
-              .from('voters_master' as any)
+              .from('voters_master')
               .update({ is_verified: true })
               .eq('id', voterData.id);
             completeVerification();

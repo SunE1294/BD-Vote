@@ -49,12 +49,13 @@ export type Database = {
       }
       candidates: {
         Row: {
+          bio: string | null
           constituency_id: string | null
           created_at: string
+          created_by: string | null
           full_name: string
           id: string
           is_active: boolean
-          bio: string | null
           party: string | null
           photo_url: string | null
           position: string
@@ -62,12 +63,13 @@ export type Database = {
           vote_count: number
         }
         Insert: {
+          bio?: string | null
           constituency_id?: string | null
           created_at?: string
+          created_by?: string | null
           full_name: string
           id?: string
           is_active?: boolean
-          bio?: string | null
           party?: string | null
           photo_url?: string | null
           position?: string
@@ -75,12 +77,13 @@ export type Database = {
           vote_count?: number
         }
         Update: {
+          bio?: string | null
           constituency_id?: string | null
           created_at?: string
+          created_by?: string | null
           full_name?: string
           id?: string
           is_active?: boolean
-          bio?: string | null
           party?: string | null
           photo_url?: string | null
           position?: string
@@ -128,6 +131,7 @@ export type Database = {
         Row: {
           created_at: string
           created_by: string | null
+          description: string | null
           election_name: string
           end_time: string
           id: string
@@ -138,6 +142,7 @@ export type Database = {
         Insert: {
           created_at?: string
           created_by?: string | null
+          description?: string | null
           election_name: string
           end_time: string
           id?: string
@@ -148,6 +153,7 @@ export type Database = {
         Update: {
           created_at?: string
           created_by?: string | null
+          description?: string | null
           election_name?: string
           end_time?: string
           id?: string
@@ -221,7 +227,9 @@ export type Database = {
       }
       voters_master: {
         Row: {
+          constituency_id: string | null
           created_at: string
+          created_by: string | null
           full_name: string
           has_voted: boolean | null
           id: string
@@ -231,7 +239,9 @@ export type Database = {
           voter_id: string
         }
         Insert: {
+          constituency_id?: string | null
           created_at?: string
+          created_by?: string | null
           full_name: string
           has_voted?: boolean | null
           id?: string
@@ -241,7 +251,9 @@ export type Database = {
           voter_id: string
         }
         Update: {
+          constituency_id?: string | null
           created_at?: string
+          created_by?: string | null
           full_name?: string
           has_voted?: boolean | null
           id?: string
@@ -310,34 +322,37 @@ export type Database = {
       }
       votes: {
         Row: {
+          block_number: number | null
           candidate_id: string
+          constituency_id: string | null
           created_at: string
           encrypted_vote: string | null
           id: string
           status: string
           tx_hash: string | null
-          voter_id: string
-          voter_id_hash: string | null
+          voter_id_hash: string
         }
         Insert: {
+          block_number?: number | null
           candidate_id: string
+          constituency_id?: string | null
           created_at?: string
           encrypted_vote?: string | null
           id?: string
           status?: string
           tx_hash?: string | null
-          voter_id: string
-          voter_id_hash?: string | null
+          voter_id_hash: string
         }
         Update: {
+          block_number?: number | null
           candidate_id?: string
+          constituency_id?: string | null
           created_at?: string
           encrypted_vote?: string | null
           id?: string
           status?: string
           tx_hash?: string | null
-          voter_id?: string
-          voter_id_hash?: string | null
+          voter_id_hash?: string
         }
         Relationships: [
           {
@@ -345,13 +360,6 @@ export type Database = {
             columns: ["candidate_id"]
             isOneToOne: false
             referencedRelation: "candidates"
-            referencedColumns: ["id"]
-          },
-          {
-            foreignKeyName: "votes_voter_id_fkey"
-            columns: ["voter_id"]
-            isOneToOne: true
-            referencedRelation: "voters"
             referencedColumns: ["id"]
           },
         ]

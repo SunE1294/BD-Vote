@@ -11,10 +11,10 @@ interface VoterStats {
 
 async function fetchVoterStats(): Promise<VoterStats> {
   const [totalRes, verifiedRes, pendingRes, votedRes] = await Promise.all([
-    supabase.from('voters_master' as any).select('*', { count: 'exact', head: true }),
-    supabase.from('voters_master' as any).select('*', { count: 'exact', head: true }).eq('is_verified', true),
-    supabase.from('voters_master' as any).select('*', { count: 'exact', head: true }).eq('is_verified', false),
-    supabase.from('voters_master' as any).select('*', { count: 'exact', head: true }).eq('has_voted', true),
+    supabase.from('voters_master').select('*', { count: 'exact', head: true }),
+    supabase.from('voters_master').select('*', { count: 'exact', head: true }).eq('is_verified', true),
+    supabase.from('voters_master').select('*', { count: 'exact', head: true }).eq('is_verified', false),
+    supabase.from('voters_master').select('*', { count: 'exact', head: true }).eq('has_voted', true),
   ]);
 
   return {
@@ -47,12 +47,12 @@ interface Voter {
 
 async function fetchVoters(): Promise<Voter[]> {
   const { data, error } = await supabase
-    .from('voters_master' as any)
+    .from('voters_master')
     .select('*')
     .order('created_at', { ascending: false });
 
   if (error) throw error;
-  return (data || []) as unknown as Voter[];
+  return (data || []) as Voter[];
 }
 
 export function useVoters() {
@@ -73,13 +73,13 @@ interface RecentVoter {
 
 async function fetchRecentVoters(limit: number): Promise<RecentVoter[]> {
   const { data, error } = await supabase
-    .from('voters_master' as any)
+    .from('voters_master')
     .select('id, voter_id, full_name, is_verified, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
 
   if (error) throw error;
-  return (data || []) as unknown as RecentVoter[];
+  return (data || []) as RecentVoter[];
 }
 
 export function useRecentVoters(limit: number = 5) {

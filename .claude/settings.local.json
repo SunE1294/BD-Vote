@@ -18,7 +18,9 @@
       "mcp__claude_ai_Supabase__get_project_url",
       "mcp__claude_ai_Supabase__get_publishable_keys",
       "Bash(npm install:*)",
-      "Bash(npx hardhat:*)"
+      "Bash(npx hardhat:*)",
+      "mcp__claude_ai_Supabase__get_logs",
+      "mcp__claude_ai_Supabase__deploy_edge_function"
     ]
   }
 }
