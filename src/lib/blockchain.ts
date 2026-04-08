@@ -14,8 +14,8 @@ export const BD_VOTE_ABI = [
 // Contract address on Sepolia testnet - UPDATE after Remix deployment
 export const BD_VOTE_CONTRACT_ADDRESS = import.meta.env.VITE_BD_VOTE_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000";
 
-// Sepolia RPC
-export const SEPOLIA_RPC_URL = "https://rpc.sepolia.org";
+// Base Sepolia RPC (contract is deployed on Base Sepolia, chainId 84532)
+export const SEPOLIA_RPC_URL = "https://sepolia.base.org";
 
 /**
  * Check if real blockchain is configured
@@ -149,7 +149,7 @@ export function formatTxHash(txHash: string): string {
  * Get Sepolia explorer URL for a transaction
  */
 export function getExplorerUrl(txHash: string): string {
-  return `https://sepolia.etherscan.io/tx/${txHash}`;
+  return `https://sepolia.basescan.org/tx/${txHash}`;
 }
 
 /**
