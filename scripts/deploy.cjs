@@ -35,6 +35,15 @@ async function main() {
     envContent += `\nVITE_BD_VOTE_CONTRACT_ADDRESS=${address}\n`;
   }
 
+  if (envContent.includes("\nBD_VOTE_CONTRACT_ADDRESS=")) {
+    envContent = envContent.replace(
+      /\nBD_VOTE_CONTRACT_ADDRESS=.*/,
+      `\nBD_VOTE_CONTRACT_ADDRESS=${address}`
+    );
+  } else {
+    envContent += `BD_VOTE_CONTRACT_ADDRESS=${address}\n`;
+  }
+
   fs.writeFileSync(envPath, envContent);
   console.log(".env updated with contract address:", address);
 }

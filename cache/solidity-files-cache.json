@@ -36,6 +36,42 @@
       "artifacts": [
         "BDVote"
       ]
+    },
+    "E:\\BD Vote Final\\contracts\\BDVote.sol": {
+      "lastModificationDate": 1775654778565,
+      "contentHash": "c0c90cb9af925bd31e34bd72c4c2055e",
+      "sourceName": "contracts/BDVote.sol",
+      "solcConfig": {
+        "version": "0.8.24",
+        "settings": {
+          "evmVersion": "paris",
+          "optimizer": {
+            "enabled": false,
+            "runs": 200
+          },
+          "outputSelection": {
+            "*": {
+              "*": [
+                "abi",
+                "evm.bytecode",
+                "evm.deployedBytecode",
+                "evm.methodIdentifiers",
+                "metadata"
+              ],
+              "": [
+                "ast"
+              ]
+            }
+          }
+        }
+      },
+      "imports": [],
+      "versionPragmas": [
+        "^0.8.24"
+      ],
+      "artifacts": [
+        "BDVote"
+      ]
     }
   }
 }

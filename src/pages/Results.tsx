@@ -63,7 +63,7 @@ async function fetchCandidateResults() {
 async function fetchRecentVotes(limit = 10) {
   const { data, error } = await supabase
     .from('votes')
-    .select('id, tx_hash, voter_id_hash, status, created_at, candidate_id')
+    .select('id, tx_hash, voter_id_hash, status, created_at, network, candidate_id, candidates(full_name, party)')
     .order('created_at', { ascending: false })
     .limit(limit);
 
@@ -73,11 +73,11 @@ async function fetchRecentVotes(limit = 10) {
 
 async function fetchVoterStats() {
   const { count: totalVoters } = await supabase
-    .from('voters')
+    .from('voters_master')
     .select('*', { count: 'exact', head: true });
 
   const { count: votedCount } = await supabase
-    .from('voters')
+    .from('voters_master')
     .select('*', { count: 'exact', head: true })
     .eq('has_voted', true);
 
@@ -358,16 +358,17 @@ export default function Results() {
                   <>
                     {/* Mobile Card View */}
                     <div className="block sm:hidden divide-y divide-border">
-                      {transactions.map((tx) => {
+                      {transactions.map((tx: any) => {
                         const txHashDisplay = tx.tx_hash ? formatTxHash(tx.tx_hash) : 'N/A';
-                        const isVerified = tx.status === 'confirmed';
-                        const isSimulated = tx.status === 'simulated';
+                        const isConfirmed = tx.status === 'confirmed';
+                        const isPending = tx.status === 'pending';
                         const time = new Date(tx.created_at);
                         const timeStr = toBengaliNumerals(time.toLocaleTimeString('en-GB', { hour12: false }));
+                        const candidateName = tx.candidates?.full_name;
 
                         return (
                           <div key={tx.id} className="p-4 space-y-2">
-                            <div className="flex items-center justify-between">
+                            <div className="flex items-center justify-between gap-2">
                               {tx.tx_hash && tx.tx_hash.startsWith('0x') ? (
                                 <a
                                   href={getExplorerUrl(tx.tx_hash)}
@@ -381,29 +382,23 @@ export default function Results() {
                               ) : (
                                 <span className="font-mono text-xs text-muted-foreground">{txHashDisplay}</span>
                               )}
-                              <Badge 
-                                variant="outline" 
+                              <Badge
+                                variant="outline"
                                 className={cn(
-                                  "text-[10px]",
-                                  isVerified
-                                    ? "bg-success/10 text-success border-0" 
-                                    : isSimulated
-                                    ? "bg-warning/10 text-warning border-0"
+                                  "text-[10px] shrink-0",
+                                  isConfirmed ? "bg-success/10 text-success border-0"
+                                    : isPending ? "bg-primary/10 text-primary border-0"
                                     : "bg-muted text-muted-foreground border-0"
                                 )}
                               >
-                                {isVerified ? (
-                                  <><CheckCircle className="size-2.5 mr-1" />ব্লকচেইনে যাচাইকৃত</>
-                                ) : isSimulated ? (
-                                  <><Clock className="size-2.5 mr-1" />সিমুলেটেড</>
-                                ) : (
-                                  <><Clock className="size-2.5 mr-1" />অপেক্ষমান</>
-                                )}
+                                {isConfirmed ? <><CheckCircle className="size-2.5 mr-1" />যাচাইকৃত</>
+                                  : isPending ? <><Clock className="size-2.5 mr-1" />পেন্ডিং</>
+                                  : <><Clock className="size-2.5 mr-1" />অপেক্ষমান</>}
                               </Badge>
                             </div>
                             <div className="flex items-center justify-between text-xs text-muted-foreground">
                               <span>{timeStr}</span>
-                              <span>{isVerified ? 'Sepolia Testnet' : 'সিমুলেটেড হ্যাশ'}</span>
+                              <span>{candidateName || '—'} · Base Sepolia</span>
                             </div>
                           </div>
                         );
@@ -416,18 +411,20 @@ export default function Results() {
                         <thead className="border-b border-border">
                           <tr className="text-left text-xs sm:text-sm text-muted-foreground">
                             <th className="px-4 sm:px-6 py-3 font-medium">TX হ্যাশ</th>
+                            <th className="px-4 sm:px-6 py-3 font-medium">প্রার্থী</th>
                             <th className="px-4 sm:px-6 py-3 font-medium">সময়</th>
                             <th className="px-4 sm:px-6 py-3 font-medium">স্ট্যাটাস</th>
                             <th className="px-4 sm:px-6 py-3 font-medium">নেটওয়ার্ক</th>
                           </tr>
                         </thead>
                         <tbody className="divide-y divide-border">
-                          {transactions.map((tx) => {
+                          {transactions.map((tx: any) => {
                             const txHashDisplay = tx.tx_hash ? formatTxHash(tx.tx_hash) : 'N/A';
-                            const isVerified = tx.status === 'confirmed';
-                            const isSimulated = tx.status === 'simulated';
+                            const isConfirmed = tx.status === 'confirmed';
+                            const isPending = tx.status === 'pending';
                             const time = new Date(tx.created_at);
                             const timeStr = toBengaliNumerals(time.toLocaleTimeString('en-GB', { hour12: false }));
+                            const candidateName = tx.candidates?.full_name;
 
                             return (
                               <tr key={tx.id} className="hover:bg-muted/50">
@@ -446,30 +443,31 @@ export default function Results() {
                                     <span className="font-mono text-xs sm:text-sm text-muted-foreground">{txHashDisplay}</span>
                                   )}
                                 </td>
+                                <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">
+                                  {candidateName ? (
+                                    <span className="font-medium">{candidateName}</span>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </td>
                                 <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm">{timeStr}</td>
                                 <td className="px-4 sm:px-6 py-3 sm:py-4">
-                                  <Badge 
-                                    variant="outline" 
+                                  <Badge
+                                    variant="outline"
                                     className={cn(
                                       "text-xs",
-                                      isVerified
-                                        ? "bg-success/10 text-success border-0" 
-                                        : isSimulated
-                                        ? "bg-warning/10 text-warning border-0"
+                                      isConfirmed ? "bg-success/10 text-success border-0"
+                                        : isPending ? "bg-primary/10 text-primary border-0"
                                         : "bg-muted text-muted-foreground border-0"
                                     )}
                                   >
-                                    {isVerified ? (
-                                      <><CheckCircle className="size-3 mr-1" />ব্লকচেইনে যাচাইকৃত</>
-                                    ) : isSimulated ? (
-                                      <><Clock className="size-3 mr-1" />সিমুলেটেড</>
-                                    ) : (
-                                      <><Clock className="size-3 mr-1" />অপেক্ষমান</>
-                                    )}
+                                    {isConfirmed ? <><CheckCircle className="size-3 mr-1" />ব্লকচেইনে যাচাইকৃত</>
+                                      : isPending ? <><Clock className="size-3 mr-1" />পেন্ডিং</>
+                                      : <><Clock className="size-3 mr-1" />অপেক্ষমান</>}
                                   </Badge>
                                 </td>
                                 <td className="px-4 sm:px-6 py-3 sm:py-4 text-xs sm:text-sm text-muted-foreground">
-                                  {isVerified ? 'Sepolia Testnet' : 'সিমুলেটেড হ্যাশ'}
+                                  Base Sepolia
                                 </td>
                               </tr>
                             );
@@ -500,9 +498,9 @@ export default function Results() {
                 <div className="size-12 sm:size-14 lg:size-16 bg-primary/10 rounded-full flex items-center justify-center mx-auto mb-3 sm:mb-4">
                   <Shield className="size-6 sm:size-7 lg:size-8 text-primary" />
                 </div>
-                <h3 className="text-base sm:text-lg lg:text-xl font-semibold mb-1.5 sm:mb-2">ব্লকচেইন নিরাপত্তা নিশ্চিত</h3>
+                <h3 className="text-base sm:text-lg lg:text-xl font-semibold mb-1.5 sm:mb-2">ব্লকচেইন-ফার্স্ট নিরাপত্তা</h3>
                 <p className="text-xs sm:text-sm text-muted-foreground max-w-2xl mx-auto leading-relaxed">
-                  এই তথ্যগুলো সরাসরি ডাটাবেস ও ব্লকচেইন নেটওয়ার্ক থেকে আসছে। রিয়েল-টাইম সাবস্ক্রিপশনের মাধ্যমে ডাটা স্বয়ংক্রিয়ভাবে আপডেট হয়।
+                  প্রতিটি ভোট সরাসরি ব্লকচেইনে রেকর্ড হয়। ডাটাবেস শুধুমাত্র ক্যাশ হিসেবে কাজ করে — ব্লকচেইনই একমাত্র কর্তৃত্ব। কেউ এই রেকর্ড পরিবর্তন করতে পারে না।
                 </p>
               </CardContent>
             </Card>

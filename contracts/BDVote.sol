@@ -2,18 +2,27 @@
 pragma solidity ^0.8.24;
 
 /**
- * @title BDVote - Bangladesh Digital Voting Smart Contract
- * @notice SRS FR-10 (Vote Encryption), FR-11 (Blockchain Storage), FR-12 (One Vote Restriction)
- * @dev Deploy on Sepolia testnet via Remix IDE + MetaMask
- * 
+ * @title BDVote — Secure Bangladesh Digital Voting Smart Contract
+ * @notice Blockchain-first architecture: this contract is the SOLE authority on votes.
+ *         Database (Supabase) is a read-cache only.
+ *
+ * Security guarantees:
+ *   - hasVoted mapping: once true, can NEVER be set back to false
+ *   - candidateVotes mapping: only increments, never decrements
+ *   - votes array: append-only, records can never be deleted or modified
+ *   - Election can be ended but NEVER restarted (prevents admin manipulation)
+ *   - Every vote generates a unique receipt for voter verification
+ *
+ * @dev Deploy on Base Sepolia testnet via Remix IDE + MetaMask
+ *
  * HOW TO DEPLOY (Remix IDE):
  * 1. Go to https://remix.ethereum.org
  * 2. Create new file "BDVote.sol" and paste this code
  * 3. Compile with Solidity 0.8.24+
  * 4. Deploy → Environment: "Injected Provider - MetaMask"
- * 5. Select Sepolia network in MetaMask (get free ETH from https://sepoliafaucet.com)
+ * 5. Select Base Sepolia network in MetaMask
  * 6. Click "Deploy" and confirm in MetaMask
- * 7. Copy the deployed contract address
+ * 7. Copy the deployed contract address → update .env
  */
 contract BDVote {
     // ===== State Variables =====
@@ -22,22 +31,30 @@ contract BDVote {
     uint256 public totalVotes;
 
     struct Vote {
-        bytes32 voterIdHash;      // keccak256 hash of voter ID (privacy)
-        bytes32 encryptedVote;    // encrypted candidate selection
-        uint256 timestamp;        // block timestamp
-        address submittedBy;      // wallet that submitted
+        bytes32 voterIdHash;     // keccak256 hash of voter ID (privacy preserved)
+        bytes32 candidateHash;   // keccak256 hash of candidate ID
+        uint256 timestamp;       // block timestamp
+        bytes32 receiptHash;     // unique receipt for voter verification
+        address submittedBy;     // relayer wallet that submitted
     }
 
-    // All votes stored sequentially
+    // All votes stored sequentially (append-only, never deleted)
     Vote[] public votes;
 
-    // Track which voter hashes have already voted (FR-12: One Vote Restriction)
+    // Track which voter hashes have already voted (once true, FOREVER true)
     mapping(bytes32 => bool) public hasVoted;
+
+    // Track vote counts per candidate hash (only increments, never decrements)
+    mapping(bytes32 => uint256) public candidateVotes;
+
+    // Receipt verification — voter can verify their vote exists
+    mapping(bytes32 => bool) public receiptExists;
 
     // ===== Events =====
     event VoteCast(
         bytes32 indexed voterIdHash,
-        bytes32 encryptedVote,
+        bytes32 indexed candidateHash,
+        bytes32 receiptHash,
         uint256 timestamp,
         uint256 voteIndex
     );
@@ -66,31 +83,50 @@ contract BDVote {
     // ===== Core Functions =====
 
     /**
-     * @notice Cast a vote (FR-10, FR-11, FR-12)
-     * @param voterIdHash keccak256 hash of the voter's NID/ID (privacy preserved)
-     * @param encryptedVote encrypted vote data (candidate selection)
+     * @notice Cast a vote — creates an IMMUTABLE record on-chain
+     * @param voterIdHash  keccak256 hash of the voter's NID (privacy preserved)
+     * @param candidateHash keccak256 hash of the candidate ID
+     * @return receiptHash  unique receipt the voter can use to verify their vote
      */
-    function castVote(bytes32 voterIdHash, bytes32 encryptedVote) external electionIsActive {
-        // FR-12: One Vote Restriction - each voter hash can only vote once
+    function castVote(
+        bytes32 voterIdHash,
+        bytes32 candidateHash
+    ) external electionIsActive returns (bytes32 receiptHash) {
+        // FR-12: One Vote Restriction — once voted, can NEVER vote again
         require(!hasVoted[voterIdHash], "This voter has already voted");
         require(voterIdHash != bytes32(0), "Invalid voter ID hash");
-        require(encryptedVote != bytes32(0), "Invalid encrypted vote");
+        require(candidateHash != bytes32(0), "Invalid candidate hash");
 
-        // Mark as voted
+        // Generate unique receipt
+        receiptHash = keccak256(abi.encodePacked(
+            voterIdHash, candidateHash, block.timestamp, totalVotes
+        ));
+
+        // IMMUTABLE: once true, forever true
         hasVoted[voterIdHash] = true;
 
-        // Store vote on-chain (FR-11: Blockchain/Distributed Storage)
+        // IMMUTABLE: only increments, never decrements
+        candidateVotes[candidateHash] += 1;
+        totalVotes += 1;
+
+        // IMMUTABLE: append-only array, records can never be deleted
         votes.push(Vote({
             voterIdHash: voterIdHash,
-            encryptedVote: encryptedVote,
+            candidateHash: candidateHash,
             timestamp: block.timestamp,
+            receiptHash: receiptHash,
             submittedBy: msg.sender
         }));
 
-        totalVotes++;
+        // Mark receipt as valid
+        receiptExists[receiptHash] = true;
 
-        emit VoteCast(voterIdHash, encryptedVote, block.timestamp, totalVotes - 1);
+        emit VoteCast(voterIdHash, candidateHash, receiptHash, block.timestamp, totalVotes - 1);
+
+        return receiptHash;
     }
+
+    // ===== Read Functions =====
 
     /**
      * @notice Get total number of votes cast
@@ -100,17 +136,34 @@ contract BDVote {
     }
 
     /**
-     * @notice Get vote details by index
+     * @notice Get vote count for a specific candidate
      */
-    function getVote(uint256 index) external view returns (
-        bytes32 voterIdHash,
-        bytes32 encryptedVote,
-        uint256 timestamp,
-        address submittedBy
-    ) {
-        require(index < votes.length, "Vote index out of bounds");
-        Vote storage v = votes[index];
-        return (v.voterIdHash, v.encryptedVote, v.timestamp, v.submittedBy);
+    function getCandidateVotes(bytes32 candidateHash) external view returns (uint256) {
+        return candidateVotes[candidateHash];
+    }
+
+    /**
+     * @notice Batch get results for multiple candidates in one call
+     * @param candidateHashes Array of candidate hashes
+     * @return voteCounts Array of vote counts (same order as input)
+     */
+    function getResults(bytes32[] calldata candidateHashes)
+        external view returns (uint256[] memory voteCounts)
+    {
+        voteCounts = new uint256[](candidateHashes.length);
+        for (uint256 i = 0; i < candidateHashes.length; i++) {
+            voteCounts[i] = candidateVotes[candidateHashes[i]];
+        }
+        return voteCounts;
+    }
+
+    /**
+     * @notice Verify a voter's receipt on-chain
+     * @param receipt The receipt hash given to the voter after voting
+     * @return exists Whether the receipt is valid
+     */
+    function verifyReceipt(bytes32 receipt) external view returns (bool exists) {
+        return receiptExists[receipt];
     }
 
     /**
@@ -120,20 +173,43 @@ contract BDVote {
         return hasVoted[voterIdHash];
     }
 
-    // ===== Admin Functions =====
-
-    function startElection() external onlyAdmin {
-        require(!electionActive, "Election already active");
-        electionActive = true;
-        emit ElectionStarted(block.timestamp);
+    /**
+     * @notice Get vote details by index
+     */
+    function getVote(uint256 index) external view returns (
+        bytes32 voterIdHash,
+        bytes32 candidateHash,
+        uint256 timestamp,
+        bytes32 receiptHash,
+        address submittedBy
+    ) {
+        require(index < votes.length, "Vote index out of bounds");
+        Vote storage v = votes[index];
+        return (v.voterIdHash, v.candidateHash, v.timestamp, v.receiptHash, v.submittedBy);
     }
 
+    /**
+     * @notice Check if election is active
+     */
+    function isElectionActive() external view returns (bool) {
+        return electionActive;
+    }
+
+    // ===== Admin Functions =====
+
+    /**
+     * @notice End election — ONE-WAY, can NEVER be restarted
+     * @dev This prevents admin from ending and restarting to allow duplicate votes
+     */
     function endElection() external onlyAdmin {
         require(electionActive, "Election not active");
         electionActive = false;
         emit ElectionEnded(block.timestamp);
     }
 
+    /**
+     * @notice Transfer admin role
+     */
     function transferAdmin(address newAdmin) external onlyAdmin {
         require(newAdmin != address(0), "Invalid address");
         emit AdminTransferred(admin, newAdmin);

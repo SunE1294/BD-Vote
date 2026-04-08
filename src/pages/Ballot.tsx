@@ -1,7 +1,7 @@
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
-import { CheckCircle, Plus, Vote, Shield, Sparkles, WifiOff, Loader2, AlertCircle } from "lucide-react";
+import { CheckCircle, Plus, Vote, Shield, Sparkles, WifiOff, Loader2, AlertCircle, Copy, ExternalLink, Receipt } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -15,12 +15,13 @@ import { toast } from "sonner";
 import { useVotes } from "@/hooks/use-votes";
 import { useCandidates } from "@/hooks/use-candidates";
 import { useActiveElection } from "@/hooks/use-election-config";
-import { formatTxHash } from "@/lib/blockchain";
+import { formatTxHash, getExplorerUrl } from "@/lib/blockchain";
 
 export default function Ballot() {
   const navigate = useNavigate();
   const [selectedCandidateId, setSelectedCandidateId] = useState<string | null>(null);
   const [showFaceVerification, setShowFaceVerification] = useState(false);
+  const [voteReceipt, setVoteReceipt] = useState<{ txHash: string; receiptHash: string } | null>(null);
   const { isOnline, addToQueue } = useOfflineQueue();
   const { castVote, isSubmitting } = useVotes();
 
@@ -38,7 +39,9 @@ export default function Ballot() {
   const selectedCandidate = activeCandidates.find(c => c.id === selectedCandidateId) || null;
 
   const handleSelect = (candidateId: string) => {
-    setSelectedCandidateId(candidateId);
+    if (!voteReceipt) {
+      setSelectedCandidateId(candidateId);
+    }
   };
 
   const handleConfirmVote = () => {
@@ -66,7 +69,7 @@ export default function Ballot() {
 
     if (!selectedCandidateId || !verifiedVoterId) return;
 
-    // Cast vote via edge function with real voter ID and candidate ID
+    // Cast vote via edge function — blockchain-first
     const result = await castVote(verifiedVoterId, selectedCandidateId);
 
     if (result.success) {
@@ -74,17 +77,25 @@ export default function Ballot() {
       sessionStorage.removeItem('verified_voter_id');
       sessionStorage.removeItem('verified_voter_name');
       
-      toast.success('ভোট সফলভাবে জমা হয়েছে! ✅', {
-        description: result.tx_hash 
-          ? `ব্লকচেইন TX: ${formatTxHash(result.tx_hash)}`
-          : 'আপনার ভোট ব্লকচেইনে নিরাপদে সংরক্ষিত হয়েছে।',
+      // Show receipt
+      setVoteReceipt({
+        txHash: result.tx_hash || '',
+        receiptHash: result.receipt_hash || '',
       });
-      setTimeout(() => navigate('/results'), 2000);
+
+      toast.success('ভোট সফলভাবে ব্লকচেইনে জমা হয়েছে! ✅', {
+        description: 'আপনার রিসিট সংরক্ষণ করুন।',
+      });
     } else {
       toast.error('ভোট দিতে সমস্যা হয়েছে', {
         description: result.error || 'আবার চেষ্টা করুন।',
       });
     }
+  };
+
+  const copyToClipboard = (text: string, label: string) => {
+    navigator.clipboard.writeText(text);
+    toast.success(`${label} কপি করা হয়েছে`);
   };
 
   if (candidatesLoading) {
@@ -131,6 +142,106 @@ export default function Ballot() {
     );
   }
 
+  // ===== VOTE RECEIPT SCREEN =====
+  if (voteReceipt) {
+    return (
+      <div className="min-h-screen flex flex-col bg-background">
+        <Navbar variant="app" />
+        <main className="flex-1 py-8 lg:py-12">
+          <div className="max-w-2xl mx-auto px-4 sm:px-6">
+            <motion.div initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }}>
+              <Card className="border-success/20">
+                <CardContent className="p-6 sm:p-8">
+                  {/* Success Header */}
+                  <div className="text-center mb-8">
+                    <div className="size-20 bg-success/10 rounded-full flex items-center justify-center mx-auto mb-4">
+                      <CheckCircle className="size-10 text-success" />
+                    </div>
+                    <h2 className="text-2xl sm:text-3xl font-bold mb-2">ভোট সফল হয়েছে! ✅</h2>
+                    <p className="text-muted-foreground">
+                      আপনার ভোট ব্লকচেইনে স্থায়ীভাবে রেকর্ড করা হয়েছে
+                    </p>
+                  </div>
+
+                  {/* Receipt Card */}
+                  <div className="bg-muted/50 rounded-xl p-5 sm:p-6 space-y-5 mb-6">
+                    <div className="flex items-center gap-2 text-primary mb-2">
+                      <Receipt className="size-5" />
+                      <span className="font-semibold text-lg">ভোট রিসিট</span>
+                    </div>
+
+                    {/* Candidate */}
+                    <div>
+                      <p className="text-xs text-muted-foreground mb-1">প্রার্থী</p>
+                      <p className="font-medium">{selectedCandidate?.full_name} — {selectedCandidate?.party || 'স্বতন্ত্র'}</p>
+                    </div>
+
+                    {/* TX Hash */}
+                    {voteReceipt.txHash && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">ট্রানজ্যাকশন হ্যাশ (TX)</p>
+                        <div className="flex items-center gap-2">
+                          <code className="text-xs sm:text-sm font-mono text-primary bg-primary/5 px-3 py-1.5 rounded-lg break-all flex-1">
+                            {voteReceipt.txHash}
+                          </code>
+                          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => copyToClipboard(voteReceipt.txHash, 'TX Hash')}>
+                            <Copy className="size-4" />
+                          </Button>
+                        </div>
+                        <a
+                          href={getExplorerUrl(voteReceipt.txHash)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-xs text-primary hover:underline flex items-center gap-1 mt-1"
+                        >
+                          BaseScan-এ দেখুন <ExternalLink className="size-3" />
+                        </a>
+                      </div>
+                    )}
+
+                    {/* Receipt Hash */}
+                    {voteReceipt.receiptHash && (
+                      <div>
+                        <p className="text-xs text-muted-foreground mb-1">রিসিট হ্যাশ (আপনার ভোট যাচাই করতে সংরক্ষণ করুন)</p>
+                        <div className="flex items-center gap-2">
+                          <code className="text-xs sm:text-sm font-mono text-success bg-success/5 px-3 py-1.5 rounded-lg break-all flex-1">
+                            {voteReceipt.receiptHash}
+                          </code>
+                          <Button variant="ghost" size="icon" className="shrink-0" onClick={() => copyToClipboard(voteReceipt.receiptHash, 'Receipt')}>
+                            <Copy className="size-4" />
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Warning */}
+                  <div className="bg-warning/10 border border-warning/20 rounded-lg p-4 mb-6">
+                    <p className="text-sm text-warning font-medium">
+                      ⚠️ আপনার রিসিট হ্যাশ সংরক্ষণ করুন! এটি দিয়ে আপনি পরে আপনার ভোট যাচাই করতে পারবেন।
+                    </p>
+                  </div>
+
+                  {/* Actions */}
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <Button className="flex-1" onClick={() => navigate('/verify-vote')}>
+                      <Shield className="size-4 mr-2" />
+                      ভোট যাচাই করুন
+                    </Button>
+                    <Button variant="outline" className="flex-1" onClick={() => navigate('/results')}>
+                      ফলাফল দেখুন
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
+          </div>
+        </main>
+      </div>
+    );
+  }
+
+  // ===== NORMAL BALLOT SCREEN =====
   return (
     <div className="min-h-screen flex flex-col bg-background">
       <Navbar variant="app" />
@@ -258,7 +369,7 @@ export default function Ballot() {
                       <Shield className="size-5 sm:size-6 text-primary" />
                     </div>
                     <div>
-                      <p className="font-medium text-primary text-sm sm:text-base">ভোট এনক্রিপশন সক্রিয়</p>
+                      <p className="font-medium text-primary text-sm sm:text-base">ব্লকচেইন-ফার্স্ট সুরক্ষা</p>
                       <p className="text-xs sm:text-sm text-muted-foreground">
                         {selectedCandidate.full_name} — {selectedCandidate.party || 'স্বতন্ত্র'}
                       </p>
@@ -291,11 +402,11 @@ export default function Ballot() {
           <div className="flex flex-wrap items-center justify-center gap-4 sm:gap-6 text-xs sm:text-sm text-muted-foreground mt-8 sm:mt-12">
             <div className="flex items-center gap-2">
               <Shield className="size-4" />
-              <span>SHA-256 SECURED</span>
+              <span>BLOCKCHAIN-FIRST</span>
             </div>
             <div className="flex items-center gap-2">
               <Sparkles className="size-4" />
-              <span>DISTRIBUTED LEDGER</span>
+              <span>IMMUTABLE LEDGER</span>
             </div>
             <span>© {new Date().getFullYear()} BD Vote BANGLADESH</span>
           </div>

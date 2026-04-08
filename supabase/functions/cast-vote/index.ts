@@ -5,12 +5,25 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version',
 };
 
+/**
+ * BDVote Secure Edge Function — Blockchain-First Architecture
+ * 
+ * Flow:
+ *   1. Verify voter in DB (exists, not voted)
+ *   2. Check BLOCKCHAIN for hasVoted (authoritative check)
+ *   3. Submit vote to BLOCKCHAIN FIRST (primary record)
+ *   4. Record in Supabase DB (secondary cache)
+ *   5. Return receipt to voter
+ * 
+ * NO SIMULATED FALLBACK — if blockchain fails, vote fails honestly.
+ */
+
 // BDVote contract ABI (only the functions we need)
 const BD_VOTE_ABI = [
   {
-    "inputs": [{"name": "voterIdHash", "type": "bytes32"}, {"name": "encryptedVote", "type": "bytes32"}],
+    "inputs": [{"name": "voterIdHash", "type": "bytes32"}, {"name": "candidateHash", "type": "bytes32"}],
     "name": "castVote",
-    "outputs": [],
+    "outputs": [{"name": "receiptHash", "type": "bytes32"}],
     "stateMutability": "nonpayable",
     "type": "function"
   },
@@ -20,18 +33,26 @@ const BD_VOTE_ABI = [
     "outputs": [{"name": "", "type": "bool"}],
     "stateMutability": "view",
     "type": "function"
+  },
+  {
+    "inputs": [{"name": "candidateHash", "type": "bytes32"}],
+    "name": "getCandidateVotes",
+    "outputs": [{"name": "", "type": "uint256"}],
+    "stateMutability": "view",
+    "type": "function"
   }
 ];
 
-async function sha256Hash(data: string): Promise<string> {
-  const encoder = new TextEncoder();
-  const dataBuffer = encoder.encode(data);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return '0x' + hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+// Consistent salt — MUST match frontend blockchain.ts
+const HASH_SALT = 'bdvote-election-system-2026';
+
+function keccak256Hash(data: string): string {
+  // Use ethers keccak256 for consistency with the smart contract
+  // We'll import ethers below
+  return ''; // placeholder, actual implementation uses ethers
 }
 
-// Convert SHA-256 hex to bytes32 (pad/truncate to 32 bytes)
+// Convert hex to bytes32 (pad/truncate to 32 bytes)
 function toBytes32(hexStr: string): string {
   const clean = hexStr.startsWith('0x') ? hexStr.slice(2) : hexStr;
   return '0x' + clean.slice(0, 64).padEnd(64, '0');
@@ -65,9 +86,20 @@ Deno.serve(async (req) => {
       );
     }
 
+    // Check blockchain configuration — NO SIMULATED FALLBACK
+    if (!contractAddress || !deployerPrivateKey || contractAddress === '0x0000000000000000000000000000000000000000') {
+      return new Response(
+        JSON.stringify({ 
+          error: 'ব্লকচেইন কনফিগার করা হয়নি। অ্যাডমিনের সাথে যোগাযোগ করুন।',
+          details: 'BD_VOTE_CONTRACT_ADDRESS and BD_VOTE_DEPLOYER_PRIVATE_KEY must be set.'
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
 
-    // 1. Verify voter exists and hasn't voted yet (FR-12)
+    // ===== Step 1: Verify voter exists in DB =====
     const { data: voter, error: voterError } = await supabaseAdmin
       .from('voters_master')
       .select('id, voter_id, full_name, has_voted, is_verified, constituency_id')
@@ -81,13 +113,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    if (voter.has_voted) {
-      return new Response(
-        JSON.stringify({ error: 'আপনি ইতিমধ্যে ভোট দিয়েছেন। একাধিক ভোট অনুমোদিত নয়।' }),
-        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
-    }
-
     if (!voter.is_verified) {
       return new Response(
         JSON.stringify({ error: 'ভোটার যাচাই সম্পন্ন হয়নি' }),
@@ -95,7 +120,7 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 2. Verify candidate
+    // ===== Step 2: Verify candidate =====
     const { data: candidate, error: candidateError } = await supabaseAdmin
       .from('candidates')
       .select('id, full_name, constituency_id')
@@ -110,59 +135,85 @@ Deno.serve(async (req) => {
       );
     }
 
-    // 3. FR-10: Vote Encryption
-    const salt = 'bdvote-election-system-2026';
+    // ===== Step 3: Generate hashes (must match frontend) =====
+    const { ethers } = await import('npm:ethers@6');
+
     const voterId = voter.voter_id || voter_id;
-    const voterIdHash = await sha256Hash(`${salt}:${voterId}`);
-    const encryptedVote = await sha256Hash(`${voterId}:${candidate_id}:${Date.now()}`);
+    const voterIdHash = ethers.keccak256(ethers.toUtf8Bytes(`${HASH_SALT}:${voterId}`));
+    const candidateHash = ethers.keccak256(ethers.toUtf8Bytes(`${HASH_SALT}:candidate:${candidate_id}`));
 
-    const voterIdHashBytes32 = toBytes32(voterIdHash);
-    const encryptedVoteBytes32 = toBytes32(encryptedVote);
+    // ===== Step 4: Check BLOCKCHAIN for hasVoted (AUTHORITATIVE CHECK) =====
+    const provider = new ethers.JsonRpcProvider('https://sepolia.base.org');
+    const wallet = new ethers.Wallet(deployerPrivateKey, provider);
+    const contract = new ethers.Contract(contractAddress, BD_VOTE_ABI, wallet);
 
-    let txHash: string;
-    let blockchainMode: 'live' | 'simulated';
-
-    // 4. FR-11: Blockchain Storage - Try real Sepolia, fallback to simulated
-    if (contractAddress && deployerPrivateKey && contractAddress !== '0x0000000000000000000000000000000000000000') {
-      try {
-        const timeout = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('Blockchain timeout')), 10000)
+    try {
+      const alreadyVotedOnChain = await contract.checkHasVoted(voterIdHash);
+      if (alreadyVotedOnChain) {
+        return new Response(
+          JSON.stringify({ error: 'আপনি ইতিমধ্যে ব্লকচেইনে ভোট দিয়েছেন। একাধিক ভোট অনুমোদিত নয়।' }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
         );
-
-        const blockchainOp = async () => {
-          const { ethers } = await import('npm:ethers@6');
-          const provider = new ethers.JsonRpcProvider('https://rpc.sepolia.org');
-          const wallet = new ethers.Wallet(deployerPrivateKey, provider);
-          const contract = new ethers.Contract(contractAddress, BD_VOTE_ABI, wallet);
-          const alreadyVoted = await contract.checkHasVoted(voterIdHashBytes32);
-          if (alreadyVoted) throw new Error('ALREADY_VOTED_ONCHAIN');
-          const tx = await contract.castVote(voterIdHashBytes32, encryptedVoteBytes32);
-          const receipt = await tx.wait();
-          return receipt.hash;
-        };
-
-        const hash = await Promise.race([blockchainOp(), timeout]);
-        txHash = hash;
-        blockchainMode = 'live';
-        console.log(`✅ Vote cast on Sepolia: ${txHash}`);
-      } catch (blockchainError) {
-        if ((blockchainError as Error).message === 'ALREADY_VOTED_ONCHAIN') {
-          return new Response(
-            JSON.stringify({ error: 'এই ভোটার ইতিমধ্যে ব্লকচেইনে ভোট দিয়েছেন' }),
-            { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-          );
-        }
-        console.error('Blockchain error, falling back to simulated:', blockchainError);
-        txHash = await sha256Hash(`tx:${voterIdHash}:${encryptedVote}:${Date.now()}`);
-        blockchainMode = 'simulated';
       }
-    } else {
-      // No contract configured - simulated mode
-      txHash = await sha256Hash(`tx:${voterIdHash}:${encryptedVote}:${Date.now()}`);
-      blockchainMode = 'simulated';
+    } catch (checkError) {
+      console.error('Blockchain hasVoted check failed:', checkError);
+      return new Response(
+        JSON.stringify({ 
+          error: 'ব্লকচেইন যাচাই করতে ব্যর্থ। পরে আবার চেষ্টা করুন।',
+          details: 'Could not verify voting status on blockchain.'
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
     }
 
-    // 5. Record vote in database
+    // ===== Step 5: Submit vote to BLOCKCHAIN FIRST (primary record) =====
+    let txHash: string;
+    let receiptHash: string;
+
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('Blockchain timeout after 30s')), 30000)
+      );
+
+      const blockchainOp = async () => {
+        const tx = await contract.castVote(voterIdHash, candidateHash);
+        console.log(`⏳ Vote TX submitted: ${tx.hash}`);
+        const receipt = await tx.wait();
+        console.log(`✅ Vote confirmed in block ${receipt.blockNumber}`);
+
+        // Extract receiptHash from the VoteCast event
+        let extractedReceipt = '';
+        for (const log of receipt.logs) {
+          try {
+            const parsed = contract.interface.parseLog({ topics: log.topics, data: log.data });
+            if (parsed && parsed.name === 'VoteCast') {
+              extractedReceipt = parsed.args.receiptHash;
+              break;
+            }
+          } catch {}
+        }
+
+        return { hash: receipt.hash, receiptHash: extractedReceipt };
+      };
+
+      const result = await Promise.race([blockchainOp(), timeout]);
+      txHash = result.hash;
+      receiptHash = result.receiptHash;
+      console.log(`✅ Vote cast on Base Sepolia: TX=${txHash}, Receipt=${receiptHash}`);
+
+    } catch (blockchainError) {
+      // NO SIMULATED FALLBACK — vote fails honestly
+      console.error('❌ Blockchain vote submission failed:', blockchainError);
+      return new Response(
+        JSON.stringify({ 
+          error: 'ব্লকচেইনে ভোট জমা দিতে ব্যর্থ হয়েছে। পরে আবার চেষ্টা করুন।',
+          details: (blockchainError as Error).message
+        }),
+        { status: 503, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ===== Step 6: Record in Supabase DB (secondary cache) =====
     const { data: voteRecord, error: voteError } = await supabaseAdmin
       .from('votes')
       .insert({
@@ -170,54 +221,57 @@ Deno.serve(async (req) => {
         constituency_id: voter.constituency_id,
         tx_hash: txHash,
         voter_id_hash: voterIdHash,
-        encrypted_vote: encryptedVote,
-        status: blockchainMode === 'live' ? 'confirmed' : 'simulated',
+        encrypted_vote: candidateHash,
+        receipt_hash: receiptHash,
+        status: 'confirmed',
+        network: 'Base Sepolia',
       })
       .select()
       .single();
 
     if (voteError) {
-      console.error('Vote insert error:', voteError);
-      return new Response(
-        JSON.stringify({ error: 'ভোট রেকর্ড করতে ব্যর্থ হয়েছে', details: voteError.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+      // Vote IS on blockchain even if DB insert fails
+      console.error('⚠️ DB insert failed (vote IS on-chain):', voteError);
     }
 
-    // 6. Update voter status
+    // ===== Step 7: Update voter status in DB =====
     await supabaseAdmin
       .from('voters_master')
       .update({ has_voted: true })
       .eq('id', voter.id);
 
-    // 7. Increment vote count
+    // ===== Step 8: Increment candidate vote count in DB =====
     await supabaseAdmin.rpc('increment_vote_count', { p_candidate_id: candidate_id }).catch(() => {});
 
-    // 8. Audit log
+    // ===== Step 9: Audit log =====
     await supabaseAdmin.from('audit_logs').insert({
       action: 'vote_cast',
       entity_type: 'vote',
-      entity_id: voteRecord.id,
+      entity_id: voteRecord?.id || 'blockchain-only',
       details: {
         voter_id_hash: voterIdHash,
+        candidate_hash: candidateHash,
         candidate_id: candidate_id,
         tx_hash: txHash,
-        blockchain_mode: blockchainMode,
-        status: blockchainMode === 'live' ? 'confirmed' : 'simulated',
+        receipt_hash: receiptHash,
+        blockchain_mode: 'live',
+        network: 'Base Sepolia',
+        status: 'confirmed',
       },
     }).catch(() => {});
 
+    // ===== Step 10: Return success with receipt =====
     return new Response(
       JSON.stringify({
         success: true,
-        vote_id: voteRecord.id,
+        vote_id: voteRecord?.id,
         tx_hash: txHash,
+        receipt_hash: receiptHash,
         voter_id_hash: voterIdHash,
-        blockchain_mode: blockchainMode,
-        status: blockchainMode === 'live' ? 'confirmed' : 'simulated',
-        message: blockchainMode === 'live'
-          ? 'আপনার ভোট সফলভাবে Sepolia ব্লকচেইনে রেকর্ড করা হয়েছে'
-          : 'আপনার ভোট সিমুলেটেড মোডে রেকর্ড করা হয়েছে (কন্ট্রাক্ট কনফিগার করুন)',
+        blockchain_mode: 'live',
+        network: 'Base Sepolia',
+        status: 'confirmed',
+        message: 'আপনার ভোট সফলভাবে ব্লকচেইনে রেকর্ড করা হয়েছে। আপনার রিসিট সংরক্ষণ করুন।',
       }),
       { status: 200, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

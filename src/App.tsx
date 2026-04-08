@@ -20,6 +20,7 @@ const HelpCenter = lazy(() => import("./pages/HelpCenter"));
 const Privacy = lazy(() => import("./pages/Privacy"));
 const Terms = lazy(() => import("./pages/Terms"));
 const Install = lazy(() => import("./pages/Install"));
+const VerifyVote = lazy(() => import("./pages/VerifyVote"));
 const NotFound = lazy(() => import("./pages/NotFound"));
 
 // Admin pages
@@ -78,6 +79,8 @@ const App = () => (
             <Route path="/candidate" element={<CandidateDashboard />} />
             {/* Official Routes */}
             <Route path="/official/login" element={<OfficialLogin />} />
+            {/* Verify Vote */}
+            <Route path="/verify-vote" element={<VerifyVote />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
