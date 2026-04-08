@@ -43,20 +43,8 @@ const BD_VOTE_ABI = [
   }
 ];
 
-// Consistent salt — MUST match frontend blockchain.ts
-const HASH_SALT = 'bdvote-election-system-2026';
-
-function keccak256Hash(data: string): string {
-  // Use ethers keccak256 for consistency with the smart contract
-  // We'll import ethers below
-  return ''; // placeholder, actual implementation uses ethers
-}
-
-// Convert hex to bytes32 (pad/truncate to 32 bytes)
-function toBytes32(hexStr: string): string {
-  const clean = hexStr.startsWith('0x') ? hexStr.slice(2) : hexStr;
-  return '0x' + clean.slice(0, 64).padEnd(64, '0');
-}
+// Secure Salt from Environment Variables (Fixing the Rainbow Table Exposure Vulnerability)
+const HASH_SALT = Deno.env.get('VOTER_HASH_SALT') || 'fallback-secure-salt-2026';
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -66,13 +54,28 @@ Deno.serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const contractAddress = Deno.env.get('BD_VOTE_CONTRACT_ADDRESS');
     const deployerPrivateKey = Deno.env.get('BD_VOTE_DEPLOYER_PRIVATE_KEY');
 
     const authHeader = req.headers.get('authorization');
     if (!authHeader) {
       return new Response(
-        JSON.stringify({ error: 'অনুমোদন প্রয়োজন' }),
+        JSON.stringify({ error: 'Top-Level Auth Header Missing' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // ===== Fix Unvalidated API Tokens: Validate the JWT =====
+    const authClient = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
+    const { data: { user }, error: authError } = await authClient.auth.getUser();
+
+    if (authError || !user) {
+      return new Response(
+        JSON.stringify({ error: 'Unauthenticated Request Detected. Security Policy Enforced.', details: authError?.message }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }

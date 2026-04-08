@@ -225,12 +225,22 @@ export default function Verification() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   }, [toast]);
 
-  const completeVerification = useCallback(() => {
+  const completeVerification = useCallback(async () => {
     idCamera.stopCamera();
     faceCamera.stopCamera();
     cancelAnimationFrame(animFrameRef.current);
     setIsProcessing(false);
     setCurrentStep('complete');
+
+    // Secure the session by establishing a server-recognized JWT token
+    try {
+      const { error: authError } = await supabase.auth.signInAnonymously();
+      if (authError) {
+         console.warn("🔐 Anonymous sign-in failed. Ensure it is enabled in your Supabase Auth Providers.", authError);
+      }
+    } catch (err) {
+      console.error(err);
+    }
 
     if (voterData) {
       sessionStorage.setItem('verified_voter', JSON.stringify(voterData));

@@ -8,7 +8,7 @@ import { ethers } from 'ethers';
  *               No simulated fallback — if blockchain fails, vote fails honestly.
  */
 
-// BDVote Smart Contract ABI (Base Sepolia Testnet)
+// BDVote Smart Contract ABI
 export const BD_VOTE_ABI = [
   "function castVote(bytes32 voterIdHash, bytes32 candidateHash) external returns (bytes32 receiptHash)",
   "function checkHasVoted(bytes32 voterIdHash) external view returns (bool)",
@@ -22,53 +22,17 @@ export const BD_VOTE_ABI = [
   "event VoteCast(bytes32 indexed voterIdHash, bytes32 indexed candidateHash, bytes32 receiptHash, uint256 timestamp, uint256 voteIndex)"
 ];
 
-// Contract address on Base Sepolia — UPDATE after Remix deployment
+// Contract address on Base Sepolia
 export const BD_VOTE_CONTRACT_ADDRESS = import.meta.env.VITE_BD_VOTE_CONTRACT_ADDRESS || "0x0000000000000000000000000000000000000000";
 
 // Base Sepolia RPC (chainId 84532)
 export const SEPOLIA_RPC_URL = "https://sepolia.base.org";
-
-// Consistent salt used across frontend and edge function
-const HASH_SALT = 'bdvote-election-system-2026';
 
 /**
  * Check if real blockchain is configured
  */
 export function isBlockchainConfigured(): boolean {
   return BD_VOTE_CONTRACT_ADDRESS !== "0x0000000000000000000000000000000000000000";
-}
-
-/**
- * Generate a keccak256 hash of the voter ID for privacy
- * Must match the edge function's hashing logic
- */
-export function hashVoterId(voterId: string): string {
-  return ethers.keccak256(ethers.toUtf8Bytes(`${HASH_SALT}:${voterId}`));
-}
-
-/**
- * Generate a keccak256 hash of the candidate ID
- * Must match the edge function's hashing logic
- */
-export function hashCandidateId(candidateId: string): string {
-  return ethers.keccak256(ethers.toUtf8Bytes(`${HASH_SALT}:candidate:${candidateId}`));
-}
-
-/**
- * Check if a voter has already voted on-chain (FR-12)
- * This is the AUTHORITATIVE check — DB check is secondary
- */
-export async function checkVotedOnChain(voterId: string): Promise<boolean> {
-  if (!isBlockchainConfigured()) return false;
-  try {
-    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
-    const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
-    const voterIdHash = hashVoterId(voterId);
-    return await contract.checkHasVoted(voterIdHash);
-  } catch {
-    console.error('Failed to check on-chain vote status');
-    return false;
-  }
 }
 
 /**
@@ -84,48 +48,6 @@ export async function getOnChainVoteCount(): Promise<number> {
   } catch {
     console.error('Failed to get on-chain vote count');
     return 0;
-  }
-}
-
-/**
- * Get vote count for a specific candidate from blockchain
- */
-export async function getOnChainCandidateVotes(candidateId: string): Promise<number> {
-  if (!isBlockchainConfigured()) return 0;
-  try {
-    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
-    const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
-    const candidateHash = hashCandidateId(candidateId);
-    const count = await contract.getCandidateVotes(candidateHash);
-    return Number(count);
-  } catch {
-    console.error('Failed to get on-chain candidate votes');
-    return 0;
-  }
-}
-
-/**
- * Batch get results for multiple candidates from blockchain
- * Returns an array of { candidateId, votes } objects
- */
-export async function getBlockchainResults(
-  candidateIds: string[]
-): Promise<{ candidateId: string; votes: number }[]> {
-  if (!isBlockchainConfigured() || candidateIds.length === 0) {
-    return candidateIds.map(id => ({ candidateId: id, votes: 0 }));
-  }
-  try {
-    const provider = new ethers.JsonRpcProvider(SEPOLIA_RPC_URL);
-    const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
-    const candidateHashes = candidateIds.map(id => hashCandidateId(id));
-    const voteCounts = await contract.getResults(candidateHashes);
-    return candidateIds.map((id, i) => ({
-      candidateId: id,
-      votes: Number(voteCounts[i]),
-    }));
-  } catch {
-    console.error('Failed to get blockchain results');
-    return candidateIds.map(id => ({ candidateId: id, votes: 0 }));
   }
 }
 
