@@ -27,8 +27,12 @@ export const BD_VOTE_CONTRACT_ADDRESS =
   import.meta.env.VITE_BD_VOTE_CONTRACT_ADDRESS ||
   "0x0eCa67dCED1D02aDACA453Ac1e330B7b4beF25f9";
 
-// Hash salt — must match edge function
-export const HASH_SALT = "fallback-secure-salt-2026";
+// Candidate hash salt — used ONLY to query vote counts for known candidate UUIDs.
+// This is intentionally frontend-visible: candidate IDs are public and vote counts
+// are public information. It is SEPARATE from VOTER_HASH_SALT which stays server-only.
+// Must match the salt used in the cast-vote edge function for candidate hashing.
+const CANDIDATE_HASH_SALT =
+  import.meta.env.VITE_CANDIDATE_HASH_SALT || 'fallback-secure-salt-2026';
 
 // Base Sepolia RPC (chainId 84532)
 export const SEPOLIA_RPC_URL = "https://sepolia.base.org";
@@ -53,7 +57,7 @@ export async function getOnChainCandidateVotes(
     const contract = new ethers.Contract(BD_VOTE_CONTRACT_ADDRESS, BD_VOTE_ABI, provider);
 
     const hashes = candidates.map(c =>
-      ethers.keccak256(ethers.toUtf8Bytes(`${HASH_SALT}:candidate:${c.id}`))
+      ethers.keccak256(ethers.toUtf8Bytes(`${CANDIDATE_HASH_SALT}:candidate:${c.id}`))
     );
 
     const counts: bigint[] = await contract.getResults(hashes);

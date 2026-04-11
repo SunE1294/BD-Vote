@@ -29,10 +29,11 @@ export default function Ballot() {
   const { data: candidates, isLoading: candidatesLoading, error: candidatesError } = useCandidates();
   const { data: election } = useActiveElection();
 
+  // Minimal voter object — only photo_url is stored (set during verification)
   const voterData = JSON.parse(sessionStorage.getItem('verified_voter') || 'null');
 
-  // Get verified voter ID from sessionStorage (set during verification)
-  const verifiedVoterId = sessionStorage.getItem('verified_voter_id');
+  // HMAC token issued by confirm-verification edge function (replaces raw voter UUID)
+  const verificationToken = sessionStorage.getItem('voter_verification_token');
 
   // Filter only active candidates
   const activeCandidates = (candidates || []).filter(c => c.is_active);
@@ -45,7 +46,7 @@ export default function Ballot() {
   };
 
   const handleConfirmVote = () => {
-    if (!verifiedVoterId) {
+    if (!verificationToken) {
       toast.error('আগে পরিচয় যাচাই করুন', {
         description: 'ভোট দেওয়ার আগে আইডি ও ফেস ভেরিফিকেশন সম্পন্ন করতে হবে।',
       });
@@ -67,14 +68,15 @@ export default function Ballot() {
       return;
     }
 
-    if (!selectedCandidateId || !verifiedVoterId) return;
+    if (!selectedCandidateId || !verificationToken) return;
 
     // Cast vote via edge function — blockchain-first
-    const result = await castVote(verifiedVoterId, selectedCandidateId);
+    const result = await castVote(verificationToken, selectedCandidateId);
 
     if (result.success) {
-      // Clear verified voter from session
-      sessionStorage.removeItem('verified_voter_id');
+      // Clear verification token — single-use, must not be reusable
+      sessionStorage.removeItem('voter_verification_token');
+      sessionStorage.removeItem('verified_voter');
       sessionStorage.removeItem('verified_voter_name');
       
       // Show receipt

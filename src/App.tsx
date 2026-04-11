@@ -40,6 +40,8 @@ const CandidateDashboard = lazy(() => import("./pages/candidate/CandidateDashboa
 
 // Official pages
 const OfficialLogin = lazy(() => import("./pages/official/OfficialLogin"));
+const LawEnforcementDashboard = lazy(() => import("./pages/official/LawEnforcementDashboard"));
+const TechDashboard = lazy(() => import("./pages/official/TechDashboard"));
 
 const queryClient = new QueryClient();
 
@@ -79,6 +81,8 @@ const App = () => (
             <Route path="/candidate" element={<CandidateDashboard />} />
             {/* Official Routes */}
             <Route path="/official/login" element={<OfficialLogin />} />
+            <Route path="/official/law-dashboard" element={<LawEnforcementDashboard />} />
+            <Route path="/official/tech-dashboard" element={<TechDashboard />} />
             {/* Verify Vote */}
             <Route path="/verify-vote" element={<VerifyVote />} />
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}

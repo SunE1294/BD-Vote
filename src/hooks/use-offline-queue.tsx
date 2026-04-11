@@ -91,49 +91,26 @@ export function useOfflineQueue() {
 
     setIsProcessing(true);
 
-    const processTransaction = async (transaction: QueuedTransaction): Promise<boolean> => {
-      try {
-        // Simulate API call - replace with actual blockchain transaction
-        await new Promise((resolve, reject) => {
-          setTimeout(() => {
-            if (Math.random() > 0.1) { // 90% success rate for demo
-              resolve(true);
-            } else {
-              reject(new Error('Transaction failed'));
-            }
-          }, 1000);
-        });
-        return true;
-      } catch (error) {
-        console.error('Transaction failed:', error);
-        return false;
-      }
-    };
-
-    const updatedQueue: QueuedTransaction[] = [];
-
+    // Votes require a short-lived HMAC verification token that was issued at
+    // the time of face verification. That token expires in 10 minutes and is
+    // tied to a single voter session. We cannot safely replay queued votes
+    // without a fresh token — doing so would allow an already-expired or
+    // stolen token to submit a vote silently.
+    //
+    // Instead, inform the voter to go through verification again online.
     for (const transaction of queue) {
-      const success = await processTransaction(transaction);
-
-      if (success) {
-        toast.success('ট্রানজ্যাকশন সফল!', {
-          description: `${transaction.type === 'vote' ? 'ভোট' : 'যাচাইকরণ'} সফলভাবে জমা হয়েছে।`,
+      if (transaction.type === 'vote') {
+        toast.warning('ভোট দিতে পুনরায় যাচাই প্রয়োজন', {
+          description:
+            'নিরাপত্তার কারণে অফলাইন ভোট স্বয়ংক্রিয়ভাবে জমা দেওয়া সম্ভব নয়। ' +
+            'ইন্টারনেট সংযোগ আসার পর আবার যাচাই করে ভোট দিন।',
+          duration: 8000,
         });
-      } else {
-        if (transaction.retryCount < MAX_RETRIES) {
-          updatedQueue.push({
-            ...transaction,
-            retryCount: transaction.retryCount + 1,
-          });
-        } else {
-          toast.error('ট্রানজ্যাকশন ব্যর্থ', {
-            description: 'সর্বোচ্চ চেষ্টার পর ব্যর্থ হয়েছে। অনুগ্রহ করে আবার চেষ্টা করুন।',
-          });
-        }
       }
     }
 
-    setQueue(updatedQueue);
+    // Clear the queue — stale tokens cannot be reused
+    setQueue([]);
     setIsProcessing(false);
   }, [queue, isProcessing]);
 

@@ -123,7 +123,7 @@ export default function Verification() {
 
       const { data: voter, error } = await supabase
         .from('voters_master')
-        .select('*')
+        .select('id, full_name, photo_url, has_voted, is_verified, voter_id, constituency_id')
         .eq('voter_id', cleanNid)
         .maybeSingle();
 
@@ -186,7 +186,7 @@ export default function Verification() {
 
       const { data: voter, error } = await supabase
         .from('voters_master')
-        .select('*')
+        .select('id, full_name, photo_url, has_voted, is_verified, voter_id, constituency_id')
         .eq('voter_id', cleanNid)
         .maybeSingle();
 
@@ -229,24 +229,43 @@ export default function Verification() {
     idCamera.stopCamera();
     faceCamera.stopCamera();
     cancelAnimationFrame(animFrameRef.current);
+    setIsProcessing(true); // show spinner while awaiting edge function
+
+    if (!voterData) {
+      setErrorMessage('ভোটার তথ্য পাওয়া যায়নি। আবার চেষ্টা করুন।');
+      setIsProcessing(false);
+      return;
+    }
+
+    try {
+      // Call confirm-verification edge function:
+      //   - marks is_verified = true server-side (browser can NEVER do this)
+      //   - returns a short-lived HMAC token required by cast-vote
+      const { data, error } = await supabase.functions.invoke('confirm-verification', {
+        body: { voter_id: voterData.id },
+      });
+
+      if (error || !data?.verification_token) {
+        const msg = data?.error || error?.message || 'যাচাই সম্পন্ন করা যায়নি';
+        setErrorMessage(msg);
+        setIsProcessing(false);
+        return;
+      }
+
+      // Store ONLY the HMAC token + photo_url needed for the ballot face re-check.
+      // Never store the full voter record — only minimal fields.
+      sessionStorage.setItem('voter_verification_token', data.verification_token);
+      sessionStorage.setItem('verified_voter', JSON.stringify({ photo_url: voterData.photo_url }));
+      sessionStorage.setItem('verified_voter_name', voterData.full_name);
+    } catch (err) {
+      console.error('confirm-verification call failed:', err);
+      setErrorMessage('নেটওয়ার্ক ত্রুটি। আবার চেষ্টা করুন।');
+      setIsProcessing(false);
+      return;
+    }
+
     setIsProcessing(false);
     setCurrentStep('complete');
-
-    // Secure the session by establishing a server-recognized JWT token
-    try {
-      const { error: authError } = await supabase.auth.signInAnonymously();
-      if (authError) {
-         console.warn("🔐 Anonymous sign-in failed. Ensure it is enabled in your Supabase Auth Providers.", authError);
-      }
-    } catch (err) {
-      console.error(err);
-    }
-
-    if (voterData) {
-      sessionStorage.setItem('verified_voter', JSON.stringify(voterData));
-      sessionStorage.setItem('verified_voter_id', voterData.id);
-      sessionStorage.setItem('verified_voter_name', voterData.full_name);
-    }
 
     toast({
       title: 'যাচাইকরণ সফল! ✅',
@@ -302,10 +321,7 @@ export default function Verification() {
           setVerificationResult({ success: result.success, similarity: result.similarity });
 
           if (result.success) {
-            await supabase
-              .from('voters_master')
-              .update({ is_verified: true })
-              .eq('id', voterData.id);
+            // is_verified is set server-side inside completeVerification → confirm-verification edge fn
             completeVerification();
           } else {
             setErrorMessage(`${result.message} আবার চেষ্টা করুন।`);

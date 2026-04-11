@@ -34,15 +34,19 @@ export function useVotes() {
 
   /**
    * Cast a vote via edge function — Blockchain-First Architecture
-   * 
-   * Flow: Edge function submits to blockchain FIRST, then caches in DB.
+   *
+   * Flow: Edge function verifies the HMAC token (proof of face-verification),
+   *       submits to blockchain, waits for confirmation, then caches in DB.
    * No simulated fallback — if blockchain fails, vote fails honestly.
+   *
+   * @param verificationToken  Short-lived HMAC token from confirm-verification edge fn
+   * @param candidateId        Candidate UUID
    */
-  const castVote = async (voterId: string, candidateId: string): Promise<CastVoteResult> => {
+  const castVote = async (verificationToken: string, candidateId: string): Promise<CastVoteResult> => {
     setIsSubmitting(true);
     try {
       const { data, error } = await supabase.functions.invoke('cast-vote', {
-        body: { voter_id: voterId, candidate_id: candidateId },
+        body: { verification_token: verificationToken, candidate_id: candidateId },
       });
 
       if (error) {

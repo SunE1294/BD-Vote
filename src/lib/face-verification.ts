@@ -90,7 +90,7 @@ export function compareFaces(descriptor1: Float32Array, descriptor2: Float32Arra
   return similarity;
 }
 
-export function isFaceMatch(descriptor1: Float32Array, descriptor2: Float32Array, threshold: number = 60): boolean {
+export function isFaceMatch(descriptor1: Float32Array, descriptor2: Float32Array, threshold: number = 70): boolean {
   const similarity = compareFaces(descriptor1, descriptor2);
   return similarity >= threshold;
 }
@@ -140,7 +140,7 @@ export interface FaceVerificationResult {
 export async function verifyFaceAgainstImage(
   liveVideoElement: HTMLVideoElement,
   referenceImageUrl: string,
-  threshold: number = 55
+  threshold: number = 70
 ): Promise<FaceVerificationResult> {
   try {
     if (!modelsLoaded) {

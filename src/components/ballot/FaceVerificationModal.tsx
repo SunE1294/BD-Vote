@@ -72,7 +72,7 @@ export function FaceVerificationModal({
     setProgress(30);
 
     try {
-      const result = await verifyFaceAgainstImage(videoRef.current, voter.photo_url, 55);
+      const result = await verifyFaceAgainstImage(videoRef.current, voter.photo_url, 70);
       setProgress(100);
       setMessage(result.message);
 
