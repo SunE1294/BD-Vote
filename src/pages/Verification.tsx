@@ -111,7 +111,7 @@ export default function Verification() {
 
       setOcrProgress(30);
 
-      // Convert to file for OCR
+      // Convert to file for OCR, camera থেকে নেওয়া image → file বানানো → OCR-এ পাঠানো
       const blob = await new Promise<Blob>((resolve, reject) => {
         canvas.toBlob(b => b ? resolve(b) : reject(new Error('Blob creation failed')), 'image/jpeg', 0.9);
       });
@@ -361,7 +361,7 @@ export default function Verification() {
       description: 'আপনি এখন ভোট দিতে পারবেন।',
     });
 
-    setTimeout(() => navigate('/ballot'), 2500);
+    setTimeout(() => navigate('/dashboard'), 2500);
   }, [faceCamera, idCamera, voterData, toast, navigate]);
 
   const handleRetry = () => {
